@@ -18,6 +18,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.BaseEncoding;
 import com.google.common.net.HostAndPort;
+import io.trino.sql.planner.plan.LimitNode;
 import io.trino.testing.AbstractTestQueries;
 import io.trino.testing.BaseConnectorTest;
 import io.trino.testing.MaterializedResult;
@@ -41,7 +42,6 @@ import static io.trino.plugin.elasticsearch.ElasticsearchQueryRunner.createElast
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.testing.MaterializedResult.resultBuilder;
-import static io.trino.testing.QueryAssertions.assertContains;
 import static io.trino.testing.assertions.Assert.assertEquals;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -94,6 +94,7 @@ public abstract class BaseElasticsearchConnectorTest
             case SUPPORTS_INSERT:
                 return false;
 
+            case SUPPORTS_LIMIT_PUSHDOWN:
             case SUPPORTS_TOPN_PUSHDOWN:
                 return false;
 
@@ -147,7 +148,7 @@ public abstract class BaseElasticsearchConnectorTest
     @Override
     public void testDescribeTable()
     {
-        MaterializedResult expectedColumns = resultBuilder(getQueryRunner().getDefaultSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
+        MaterializedResult expectedColumns = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
                 .row("clerk", "varchar", "", "")
                 .row("comment", "varchar", "", "")
                 .row("custkey", "bigint", "", "")
@@ -183,45 +184,6 @@ public abstract class BaseElasticsearchConnectorTest
         assertExplain(
                 "EXPLAIN SELECT name FROM nation ORDER BY nationkey DESC NULLS LAST LIMIT 5",
                 "TopNPartial\\[5 by \\(nationkey DESC");
-    }
-
-    @Test
-    @Override
-    public void testLimitPushDown()
-    {
-        // The column metadata for the Elasticsearch connector tables are provided
-        // based on the column name in alphabetical order.
-        // This is why when computing the expected result from H2, instead of using
-        // the wildcard query `SELECT * FROM orders`, it is imposed to specify
-        // explicitly the column names to select so that they match `actual.getTypes()`
-        MaterializedResult actual = computeActual(
-                "(TABLE orders ORDER BY orderkey) UNION ALL " +
-                        "SELECT * FROM orders WHERE orderstatus = 'F' UNION ALL " +
-                        "(TABLE orders ORDER BY orderkey LIMIT 20) UNION ALL " +
-                        "(TABLE orders LIMIT 5) UNION ALL " +
-                        "TABLE orders LIMIT 10");
-        MaterializedResult all = computeExpected(
-                "SELECT clerk, comment, custkey,orderdate, orderkey, orderpriority, orderstatus, shippriority, totalprice " +
-                        "FROM orders", actual.getTypes());
-
-        assertEquals(actual.getMaterializedRows().size(), 10);
-        assertContains(all, actual);
-
-        // with ORDER BY
-        assertQuery("SELECT name FROM nation ORDER BY nationkey LIMIT 3");
-        assertQuery("SELECT name FROM nation ORDER BY regionkey LIMIT 5"); // query is deterministic because first peer group in regionkey order has 5 rows
-
-        // global aggregation, LIMIT should be removed (and connector should not prevent this from happening)
-        assertQuery("SELECT max(regionkey) FROM nation LIMIT 5");
-
-        // with aggregation
-        assertQuery("SELECT regionkey, max(name) FROM nation GROUP BY regionkey LIMIT 5");
-
-        // with DISTINCT (can be expressed as DistinctLimitNode and handled differently)
-        assertQuery("SELECT DISTINCT regionkey FROM nation LIMIT 5");
-
-        // with filter and aggregation
-        assertQuery("SELECT regionkey, count(*) FROM nation WHERE name < 'EGYPT' GROUP BY regionkey LIMIT 3");
     }
 
     @Override
@@ -786,14 +748,7 @@ public abstract class BaseElasticsearchConnectorTest
     public void testLimitPushdown()
             throws IOException
     {
-        String indexName = "limit_pushdown";
-
-        index(indexName, ImmutableMap.of("c1", "v1"));
-        index(indexName, ImmutableMap.of("c1", "v2"));
-        index(indexName, ImmutableMap.of("c1", "v3"));
-        assertEquals(computeActual("SELECT * FROM limit_pushdown").getRowCount(), 3);
-        assertEquals(computeActual("SELECT * FROM limit_pushdown LIMIT 1").getRowCount(), 1);
-        assertEquals(computeActual("SELECT * FROM limit_pushdown LIMIT 2").getRowCount(), 2);
+        assertThat(query("SELECT name FROM nation LIMIT 30")).isNotFullyPushedDown(LimitNode.class); // Use high limit for result determinism
     }
 
     @Test

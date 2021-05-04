@@ -67,7 +67,9 @@ import io.trino.sql.tree.Cast;
 import io.trino.sql.tree.CharLiteral;
 import io.trino.sql.tree.CoalesceExpression;
 import io.trino.sql.tree.ComparisonExpression;
+import io.trino.sql.tree.CurrentCatalog;
 import io.trino.sql.tree.CurrentPath;
+import io.trino.sql.tree.CurrentSchema;
 import io.trino.sql.tree.CurrentTime;
 import io.trino.sql.tree.CurrentUser;
 import io.trino.sql.tree.DecimalLiteral;
@@ -233,7 +235,7 @@ public class ExpressionAnalyzer
     private final boolean isDescribe;
 
     private final Map<NodeRef<FunctionCall>, ResolvedFunction> resolvedFunctions = new LinkedHashMap<>();
-    private final Set<NodeRef<SubqueryExpression>> scalarSubqueries = new LinkedHashSet<>();
+    private final Set<NodeRef<SubqueryExpression>> subqueries = new LinkedHashSet<>();
     private final Set<NodeRef<ExistsPredicate>> existsSubqueries = new LinkedHashSet<>();
     private final Map<NodeRef<Expression>, Type> expressionCoercions = new LinkedHashMap<>();
     private final Set<NodeRef<Expression>> typeOnlyCoercions = new LinkedHashSet<>();
@@ -394,9 +396,9 @@ public class ExpressionAnalyzer
         visitor.analyzeWindow(window, new StackableAstVisitor.StackableAstVisitorContext<>(Context.notInLambda(scope)), originalNode);
     }
 
-    public Set<NodeRef<SubqueryExpression>> getScalarSubqueries()
+    public Set<NodeRef<SubqueryExpression>> getSubqueries()
     {
-        return unmodifiableSet(scalarSubqueries);
+        return unmodifiableSet(subqueries);
     }
 
     public Set<NodeRef<ExistsPredicate>> getExistsSubqueries()
@@ -1604,6 +1606,18 @@ public class ExpressionAnalyzer
         }
 
         @Override
+        protected Type visitCurrentCatalog(CurrentCatalog node, StackableAstVisitorContext<Context> context)
+        {
+            return setExpressionType(node, VARCHAR);
+        }
+
+        @Override
+        protected Type visitCurrentSchema(CurrentSchema node, StackableAstVisitorContext<Context> context)
+        {
+            return setExpressionType(node, VARCHAR);
+        }
+
+        @Override
         protected Type visitCurrentUser(CurrentUser node, StackableAstVisitorContext<Context> context)
         {
             return setExpressionType(node, VARCHAR);
@@ -1810,9 +1824,8 @@ public class ExpressionAnalyzer
             process(value, context);
 
             Expression valueList = node.getValueList();
-            process(valueList, context);
-
             if (valueList instanceof InListExpression) {
+                process(valueList, context);
                 InListExpression inListExpression = (InListExpression) valueList;
 
                 coerceToSingleType(context,
@@ -1820,7 +1833,12 @@ public class ExpressionAnalyzer
                         ImmutableList.<Expression>builder().add(value).addAll(inListExpression.getValues()).build());
             }
             else if (valueList instanceof SubqueryExpression) {
+                subqueryInPredicates.add(NodeRef.of(node));
+                analyzeSubquery((SubqueryExpression) valueList, context);
                 coerceToSingleType(context, node, "value and result of subquery must be of the same type for IN expression: %s vs %s", value, valueList);
+            }
+            else {
+                throw new IllegalArgumentException("Unexpected value list type for InPredicate: " + node.getValueList().getClass().getName());
             }
 
             return setExpressionType(node, BOOLEAN);
@@ -1837,6 +1855,50 @@ public class ExpressionAnalyzer
 
         @Override
         protected Type visitSubqueryExpression(SubqueryExpression node, StackableAstVisitorContext<Context> context)
+        {
+            Type type = analyzeScalarSubquery(node, context);
+            subqueries.add(NodeRef.of(node));
+            return type;
+        }
+
+        private Type analyzeScalarSubquery(SubqueryExpression node, StackableAstVisitorContext<Context> context)
+        {
+            if (context.getContext().isInLambda()) {
+                throw semanticException(NOT_SUPPORTED, node, "Lambda expression cannot contain subqueries");
+            }
+            StatementAnalyzer analyzer = statementAnalyzerFactory.apply(node);
+            Scope subqueryScope = Scope.builder()
+                    .withParent(context.getContext().getScope())
+                    .build();
+            Scope queryScope = analyzer.analyze(node.getQuery(), subqueryScope);
+
+            Type type;
+            if (queryScope.getRelationType().getVisibleFieldCount() == 1) {
+                type = getOnlyElement(queryScope.getRelationType().getVisibleFields()).getType();
+            }
+            else {
+                ImmutableList.Builder<RowType.Field> fields = ImmutableList.builder();
+                for (int i = 0; i < queryScope.getRelationType().getAllFieldCount(); i++) {
+                    Field field = queryScope.getRelationType().getFieldByIndex(i);
+                    if (!field.isHidden()) {
+                        if (field.getName().isPresent()) {
+                            fields.add(RowType.field(field.getName().get(), field.getType()));
+                        }
+                        else {
+                            fields.add(RowType.field(field.getType()));
+                        }
+                    }
+                }
+
+                type = RowType.from(fields.build());
+            }
+
+            sourceFields.addAll(queryScope.getRelationType().getVisibleFields());
+            setExpressionType(node, type);
+            return type;
+        }
+
+        private Type analyzeSubquery(SubqueryExpression node, StackableAstVisitorContext<Context> context)
         {
             if (context.getContext().isInLambda()) {
                 throw semanticException(NOT_SUPPORTED, node, "Lambda expression cannot contain subqueries");
@@ -1855,21 +1917,11 @@ public class ExpressionAnalyzer
                         queryScope.getRelationType().getVisibleFieldCount());
             }
 
-            Node previousNode = context.getPreviousNode().orElse(null);
-            if (previousNode instanceof InPredicate && ((InPredicate) previousNode).getValue() != node) {
-                subqueryInPredicates.add(NodeRef.of((InPredicate) previousNode));
-            }
-            else if (previousNode instanceof QuantifiedComparisonExpression) {
-                quantifiedComparisons.add(NodeRef.of((QuantifiedComparisonExpression) previousNode));
-            }
-            else {
-                scalarSubqueries.add(NodeRef.of(node));
-            }
-
             sourceFields.add(queryScope.getRelationType().getFieldByIndex(0));
 
             Type type = getOnlyElement(queryScope.getRelationType().getVisibleFields()).getType();
-            return setExpressionType(node, type);
+            setExpressionType(node, type);
+            return type;
         }
 
         @Override
@@ -1903,11 +1955,13 @@ public class ExpressionAnalyzer
         @Override
         protected Type visitQuantifiedComparisonExpression(QuantifiedComparisonExpression node, StackableAstVisitorContext<Context> context)
         {
+            quantifiedComparisons.add(NodeRef.of(node));
+
             Expression value = node.getValue();
             process(value, context);
 
             Expression subquery = node.getSubquery();
-            process(subquery, context);
+            analyzeSubquery((SubqueryExpression) subquery, context);
 
             Type comparisonType = coerceToSingleType(context, node, "Value expression and result of subquery must be of the same type for quantified comparison: %s vs %s", value, subquery);
 
@@ -2287,7 +2341,7 @@ public class ExpressionAnalyzer
                 analyzer.getExpressionTypes(),
                 analyzer.getExpressionCoercions(),
                 analyzer.getSubqueryInPredicates(),
-                analyzer.getScalarSubqueries(),
+                analyzer.getSubqueries(),
                 analyzer.getExistsSubqueries(),
                 analyzer.getColumnReferences(),
                 analyzer.getTypeOnlyCoercions(),
@@ -2321,7 +2375,7 @@ public class ExpressionAnalyzer
                 analyzer.getExpressionTypes(),
                 analyzer.getExpressionCoercions(),
                 analyzer.getSubqueryInPredicates(),
-                analyzer.getScalarSubqueries(),
+                analyzer.getSubqueries(),
                 analyzer.getExistsSubqueries(),
                 analyzer.getColumnReferences(),
                 analyzer.getTypeOnlyCoercions(),
@@ -2351,7 +2405,7 @@ public class ExpressionAnalyzer
                 analyzer.getExpressionTypes(),
                 analyzer.getExpressionCoercions(),
                 analyzer.getSubqueryInPredicates(),
-                analyzer.getScalarSubqueries(),
+                analyzer.getSubqueries(),
                 analyzer.getExistsSubqueries(),
                 analyzer.getColumnReferences(),
                 analyzer.getTypeOnlyCoercions(),
@@ -2381,7 +2435,7 @@ public class ExpressionAnalyzer
                 analyzer.getExpressionTypes(),
                 analyzer.getExpressionCoercions(),
                 analyzer.getSubqueryInPredicates(),
-                analyzer.getScalarSubqueries(),
+                analyzer.getSubqueries(),
                 analyzer.getExistsSubqueries(),
                 analyzer.getColumnReferences(),
                 analyzer.getTypeOnlyCoercions(),

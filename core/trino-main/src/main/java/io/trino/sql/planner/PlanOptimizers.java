@@ -28,6 +28,7 @@ import io.trino.split.PageSourceManager;
 import io.trino.split.SplitManager;
 import io.trino.sql.planner.iterative.IterativeOptimizer;
 import io.trino.sql.planner.iterative.Rule;
+import io.trino.sql.planner.iterative.RuleStats;
 import io.trino.sql.planner.iterative.rule.AddExchangesBelowPartialAggregationOverGroupIdRuleSet;
 import io.trino.sql.planner.iterative.rule.AddIntermediateAggregations;
 import io.trino.sql.planner.iterative.rule.ApplyTableScanRedirection;
@@ -38,7 +39,9 @@ import io.trino.sql.planner.iterative.rule.DecorrelateLeftUnnestWithGlobalAggreg
 import io.trino.sql.planner.iterative.rule.DecorrelateUnnest;
 import io.trino.sql.planner.iterative.rule.DesugarArrayConstructor;
 import io.trino.sql.planner.iterative.rule.DesugarAtTimeZone;
+import io.trino.sql.planner.iterative.rule.DesugarCurrentCatalog;
 import io.trino.sql.planner.iterative.rule.DesugarCurrentPath;
+import io.trino.sql.planner.iterative.rule.DesugarCurrentSchema;
 import io.trino.sql.planner.iterative.rule.DesugarCurrentUser;
 import io.trino.sql.planner.iterative.rule.DesugarLambdaExpression;
 import io.trino.sql.planner.iterative.rule.DesugarLike;
@@ -218,6 +221,7 @@ import io.trino.sql.planner.optimizations.IndexJoinOptimizer;
 import io.trino.sql.planner.optimizations.LimitPushDown;
 import io.trino.sql.planner.optimizations.MetadataQueryOptimizer;
 import io.trino.sql.planner.optimizations.OptimizeMixedDistinctAggregations;
+import io.trino.sql.planner.optimizations.OptimizerStats;
 import io.trino.sql.planner.optimizations.PlanOptimizer;
 import io.trino.sql.planner.optimizations.PredicatePushDown;
 import io.trino.sql.planner.optimizations.PruneUnreferencedOutputs;
@@ -229,10 +233,10 @@ import io.trino.sql.planner.optimizations.UnaliasSymbolReferences;
 import io.trino.sql.planner.optimizations.WindowFilterPushDown;
 import org.weakref.jmx.MBeanExporter;
 
-import javax.annotation.PreDestroy;
 import javax.inject.Inject;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static io.trino.SystemSessionProperties.isIterativeRuleBasedColumnPruning;
@@ -241,11 +245,8 @@ public class PlanOptimizers
         implements PlanOptimizersFactory
 {
     private final List<PlanOptimizer> optimizers;
-    private final RuleStatsRecorder ruleStats;
+    private final RuleStatsRecorder ruleStats = new RuleStatsRecorder();
     private final OptimizerStatsRecorder optimizerStats = new OptimizerStatsRecorder();
-    private final MBeanExporter exporter;
-
-    private boolean initialized;
 
     @Inject
     public PlanOptimizers(
@@ -261,7 +262,6 @@ public class PlanOptimizers
             @EstimatedExchanges CostCalculator estimatedExchangesCostCalculator,
             CostComparator costComparator,
             TaskCountEstimator taskCountEstimator,
-            RuleStatsRecorder ruleStats,
             NodePartitioningManager nodePartitioningManager)
     {
         this(metadata,
@@ -277,15 +277,7 @@ public class PlanOptimizers
                 estimatedExchangesCostCalculator,
                 costComparator,
                 taskCountEstimator,
-                ruleStats,
                 nodePartitioningManager);
-    }
-
-    @PreDestroy
-    public void destroy()
-    {
-        ruleStats.unexport(exporter);
-        optimizerStats.unexport(exporter);
     }
 
     public PlanOptimizers(
@@ -302,11 +294,8 @@ public class PlanOptimizers
             CostCalculator estimatedExchangesCostCalculator,
             CostComparator costComparator,
             TaskCountEstimator taskCountEstimator,
-            RuleStatsRecorder ruleStats,
             NodePartitioningManager nodePartitioningManager)
     {
-        this.ruleStats = ruleStats;
-        this.exporter = exporter;
         ImmutableList.Builder<PlanOptimizer> builder = ImmutableList.builder();
 
         Set<Rule<?>> columnPruningRules = ImmutableSet.of(
@@ -412,6 +401,8 @@ public class PlanOptimizers
                         ImmutableSet.<Rule<?>>builder()
                                 .addAll(new DesugarLambdaExpression().rules())
                                 .addAll(new DesugarAtTimeZone(metadata, typeAnalyzer).rules())
+                                .addAll(new DesugarCurrentCatalog(metadata).rules())
+                                .addAll(new DesugarCurrentSchema(metadata).rules())
                                 .addAll(new DesugarCurrentUser(metadata).rules())
                                 .addAll(new DesugarCurrentPath(metadata).rules())
                                 .addAll(new DesugarTryExpression(metadata, typeAnalyzer).rules())
@@ -434,6 +425,7 @@ public class PlanOptimizers
                                 .addAll(projectionPushdownRules)
                                 .addAll(ImmutableSet.of(
                                         new MergeFilters(metadata),
+                                        new InlineProjections(),
                                         new RemoveRedundantIdentityProjections(),
                                         new RemoveFullSample(),
                                         new EvaluateZeroSample(),
@@ -759,7 +751,7 @@ public class PlanOptimizers
 
         if (!forceSingleNode) {
             builder.add(new ReplicateSemiJoinInDelete()); // Must run before AddExchanges
-            builder.add((new IterativeOptimizer(
+            builder.add(new IterativeOptimizer(
                     ruleStats,
                     statsCalculator,
                     estimatedExchangesCostCalculator,
@@ -767,7 +759,7 @@ public class PlanOptimizers
                             new DetermineJoinDistributionType(costComparator, taskCountEstimator), // Must run before AddExchanges
                             // Must run before AddExchanges and after ReplicateSemiJoinInDelete
                             // to avoid temporarily having an invalid plan
-                            new DetermineSemiJoinDistributionType(costComparator, taskCountEstimator)))));
+                            new DetermineSemiJoinDistributionType(costComparator, taskCountEstimator))));
 
             builder.add(new IterativeOptimizer(
                     ruleStats,
@@ -894,18 +886,18 @@ public class PlanOptimizers
     @Override
     public List<PlanOptimizer> get()
     {
-        initialize();
         return optimizers;
     }
 
-    private synchronized void initialize()
+    @Override
+    public Map<Class<?>, OptimizerStats> getOptimizerStats()
     {
-        if (initialized) {
-            return;
-        }
+        return optimizerStats.getStats();
+    }
 
-        ruleStats.export(exporter);
-        optimizerStats.export(exporter);
-        initialized = true;
+    @Override
+    public Map<Class<?>, RuleStats> getRuleStats()
+    {
+        return ruleStats.getStats();
     }
 }

@@ -131,6 +131,10 @@ public abstract class BaseSqlServerConnectorTest
 
         assertThat(query("SELECT count(*) FROM orders")).isFullyPushedDown();
         assertThat(query("SELECT count(nationkey) FROM nation")).isFullyPushedDown();
+        assertThat(query("SELECT count(1) FROM orders")).isFullyPushedDown();
+        assertThat(query("SELECT count() FROM orders")).isFullyPushedDown();
+        assertThat(query("SELECT custkey, count(1) FROM orders GROUP BY custkey")).isFullyPushedDown();
+
         assertThat(query("SELECT min(totalprice) FROM orders")).isFullyPushedDown();
 
         // GROUP BY
@@ -429,31 +433,6 @@ public abstract class BaseSqlServerConnectorTest
                     .matches("VALUES (CAST(123.321 AS decimal(9,3)), CAST(123456789.987654321 AS decimal(30, 10)))")
                     .isFullyPushedDown();
         }
-    }
-
-    @Test
-    public void testLimitPushdown()
-    {
-        assertThat(query("SELECT name FROM nation LIMIT 30")).isFullyPushedDown(); // Use high limit for result determinism
-
-        // with filter over numeric column
-        assertThat(query("SELECT name FROM nation WHERE regionkey = 3 LIMIT 5")).isFullyPushedDown();
-
-        // with filter over varchar column
-        assertThat(query("SELECT name FROM nation WHERE name < 'EEE' LIMIT 5"))
-                // SQL Server is case insensitive by default
-                .isNotFullyPushedDown(FilterNode.class);
-
-        // with aggregation
-        assertThat(query("SELECT max(regionkey) FROM nation LIMIT 5")).isFullyPushedDown(); // global aggregation, LIMIT removed
-        assertThat(query("SELECT regionkey, max(name) FROM nation GROUP BY regionkey LIMIT 5")).isFullyPushedDown();
-        assertThat(query("SELECT DISTINCT regionkey FROM nation LIMIT 5")).isFullyPushedDown();
-
-        // with filter and aggregation
-        assertThat(query("SELECT regionkey, count(*) FROM nation WHERE nationkey < 5 GROUP BY regionkey LIMIT 3")).isFullyPushedDown();
-        assertThat(query("SELECT regionkey, count(*) FROM nation WHERE name < 'EGYPT' GROUP BY regionkey LIMIT 3"))
-                // SQL Server is case insensitive by default
-                .isNotFullyPushedDown(FilterNode.class);
     }
 
     @Test

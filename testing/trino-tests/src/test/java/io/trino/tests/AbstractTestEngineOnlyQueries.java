@@ -2333,9 +2333,6 @@ public abstract class AbstractTestEngineOnlyQueries
     {
         assertQuery("SELECT count(*) FROM (SELECT (SELECT 1))");
         assertQuery("SELECT * FROM (SELECT (SELECT 1))");
-        assertQueryFails(
-                "SELECT * FROM (SELECT (SELECT 1, 2))",
-                "line 1:23: Multiple columns returned by subquery are not yet supported. Found 2");
     }
 
     @Test
@@ -3583,9 +3580,6 @@ public abstract class AbstractTestEngineOnlyQueries
         assertQueryOrdered(
                 "SELECT (SELECT t.* FROM (VALUES 1)) FROM (SELECT name FROM nation ORDER BY regionkey, name LIMIT 5) t(a)",
                 "SELECT name FROM nation ORDER BY regionkey, name LIMIT 5");
-        assertQueryFails(
-                "SELECT (SELECT t.* FROM (VALUES 1)) FROM (SELECT name, regionkey FROM nation) t(a, b)",
-                ".* Multiple columns returned by subquery are not yet supported. Found 2");
         // alias/table name shadowing
         assertQuery("SELECT(SELECT region.* FROM (VALUES 1) region) FROM region", "SELECT 1 FROM region");
         assertQuery("SELECT(SELECT r.* FROM (VALUES 1) r) FROM region r", "SELECT 1 FROM region");
@@ -6026,39 +6020,29 @@ public abstract class AbstractTestEngineOnlyQueries
     @Test
     public void testLargePivot()
     {
-        int columns = 254;
+        int arrayConstructionLimit = 254;
 
-        MaterializedResult result = computeActual(pivotQuery(columns));
+        MaterializedResult result = computeActual(pivotQuery(arrayConstructionLimit));
         assertThat(result.getRowCount())
                 .as("row count")
-                .isEqualTo(columns);
+                .isEqualTo(arrayConstructionLimit);
 
         MaterializedRow row = result.getMaterializedRows().get(0);
         assertThat(row.getFieldCount())
                 .as("field count")
-                .isEqualTo(columns + 2);
-    }
+                .isEqualTo(arrayConstructionLimit + 2);
 
-    @Test
-    public void testPivotExceedingMaximumArraySize()
-    {
-        assertQueryFails(pivotQuery(255), "Too many arguments for array constructor");
-    }
-
-    @Test(timeOut = 30_000)
-    public void testLateMaterializationOuterJoin()
-    {
-        Session session = Session.builder(getQueryRunner().getDefaultSession())
-                .setSystemProperty(LATE_MATERIALIZATION, "true")
-                .setSystemProperty(JOIN_REORDERING_STRATEGY, NONE.toString())
-                .setSystemProperty(JOIN_DISTRIBUTION_TYPE, BROADCAST.toString())
-                .build();
-        assertQuery(session, "SELECT * FROM (SELECT * FROM nation WHERE nationkey < -1) a RIGHT JOIN nation b ON a.nationkey = b.nationkey");
+        // Verify that arrayConstructionLimit is the current limit so that the test stays relevant and prevents regression if we improve in the future.
+        assertQueryFails(pivotQuery(arrayConstructionLimit + 1), "Too many arguments for array constructor");
     }
 
     private static String pivotQuery(int columnsCount)
     {
-        String values = IntStream.range(0, columnsCount)
+        String fields = IntStream.range(0, columnsCount)
+                .mapToObj(columnNumber -> "lower(name)")
+                .collect(joining(", "));
+
+        String literals = IntStream.range(0, columnsCount)
                 .mapToObj(columnNumber -> format("%d", columnNumber))
                 .collect(joining(", "));
 
@@ -6066,7 +6050,18 @@ public abstract class AbstractTestEngineOnlyQueries
                 .mapToObj(columnNumber -> format("a%d", columnNumber))
                 .collect(joining(", "));
 
-        return format("SELECT * FROM (SELECT %s) a(%s) INNER JOIN unnest(ARRAY[%1$s], ARRAY[%2$s]) b(b1, b2) ON true", values, columns);
+        return format("SELECT * FROM (SELECT %s FROM region LIMIT 1) a(%s) INNER JOIN unnest(ARRAY[%s], ARRAY[%2$s]) b(b1, b2) ON true", fields, columns, literals);
+    }
+
+    @Test(timeOut = 30_000)
+    public void testLateMaterializationOuterJoin()
+    {
+        Session session = Session.builder(getSession())
+                .setSystemProperty(LATE_MATERIALIZATION, "true")
+                .setSystemProperty(JOIN_REORDERING_STRATEGY, NONE.toString())
+                .setSystemProperty(JOIN_DISTRIBUTION_TYPE, BROADCAST.toString())
+                .build();
+        assertQuery(session, "SELECT * FROM (SELECT * FROM nation WHERE nationkey < -1) a RIGHT JOIN nation b ON a.nationkey = b.nationkey");
     }
 
     private static ZonedDateTime zonedDateTime(String value)
