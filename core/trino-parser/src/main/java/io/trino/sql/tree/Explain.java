@@ -92,7 +92,7 @@ public class Explain
     @Override
     public int hashCode()
     {
-        return Objects.hash(statement, options, analyze);
+        return Objects.hash(statement, options, analyze, verbose);
     }
 
     @Override
@@ -107,7 +107,8 @@ public class Explain
         Explain o = (Explain) obj;
         return Objects.equals(statement, o.statement) &&
                 Objects.equals(options, o.options) &&
-                Objects.equals(analyze, o.analyze);
+                Objects.equals(analyze, o.analyze) &&
+                Objects.equals(verbose, o.verbose);
     }
 
     @Override
@@ -117,6 +118,7 @@ public class Explain
                 .add("statement", statement)
                 .add("options", options)
                 .add("analyze", analyze)
+                .add("verbose", verbose)
                 .toString();
     }
 }
