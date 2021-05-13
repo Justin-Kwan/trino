@@ -34,6 +34,7 @@ import java.util.stream.Stream;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
 
 @Immutable
 public class Table
@@ -117,6 +118,18 @@ public class Table
     public List<Column> getPartitionColumns()
     {
         return partitionColumns;
+    }
+
+    public List<String> getPartitionColumnNames()
+    {
+        return partitionColumns.stream()
+                .map(Column::getName)
+                .collect(toList());
+    }
+
+    public boolean isNotPartitioned()
+    {
+        return partitionColumns.isEmpty();
     }
 
     public Optional<Column> getColumn(String name)

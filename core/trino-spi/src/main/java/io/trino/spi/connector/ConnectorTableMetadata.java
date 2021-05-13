@@ -81,6 +81,20 @@ public class ConnectorTableMetadata
                         .collect(toUnmodifiableList()));
     }
 
+    public List<String> getPartitionColumnNames()
+    {
+        return Collections.emptyList();
+    }
+
+    public boolean isNotPartitioned()
+    {
+        return true;
+    }
+
+    public void assertColumnsValid(ConnectorSession session)
+    {
+    }
+
     @Override
     public String toString()
     {

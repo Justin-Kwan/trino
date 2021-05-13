@@ -500,8 +500,15 @@ public class LogicalPlanner
             Optional<NewTableLayout> writeTableLayout,
             TableStatisticsMetadata statisticsMetadata)
     {
+        System.out.println("----------------------------------- begin CREATING TABLE WRITER PLAN!!! -----------------------------------");
+
+//        metadata.getNewTableLayout(session, analysis.get);
+
         Optional<PartitioningScheme> partitioningScheme = Optional.empty();
         Optional<PartitioningScheme> preferredPartitioningScheme = Optional.empty();
+
+        System.out.println(">>>>>>>>>>> is write table layout present: " + writeTableLayout.isPresent());
+
         if (writeTableLayout.isPresent()) {
             List<Symbol> partitionFunctionArguments = new ArrayList<>();
             writeTableLayout.get().getPartitionColumns().stream()
@@ -588,6 +595,8 @@ public class LogicalPlanner
                 symbolAllocator.newSymbol("rows", BIGINT),
                 Optional.empty(),
                 Optional.empty());
+
+        System.out.println("----------------------------------- end CREATING TABLE WRITER PLAN!!! -----------------------------------");
 
         return new RelationPlan(commitNode, analysis.getRootScope(), commitNode.getOutputSymbols(), Optional.empty());
     }
