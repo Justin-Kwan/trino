@@ -314,17 +314,9 @@ public class TestSqlParser
         // forms such as "X 'a b' " may look like BinaryLiteral
         // but they do not pass the syntax rule for BinaryLiteral
         // but instead conform to TypeConstructor, which generates a GenericLiteral expression
-        assertThatThrownBy(() -> expression("X 'a b'"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessageMatching("line 1:1: Spaces are not allowed.*");
-
-        assertThatThrownBy(() -> expression("X'a b c'"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessageMatching("line 1:1: Binary literal must contain an even number of digits.*");
-
-        assertThatThrownBy(() -> expression("X'a z'"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessageMatching("line 1:1: Binary literal can only contain hexadecimal digits.*");
+        assertInvalidExpression("X 'a b'", "Spaces are not allowed.*");
+        assertInvalidExpression("X'a b c'", "Binary literal must contain an even number of digits.*");
+        assertInvalidExpression("X'a z'", "Binary literal can only contain hexadecimal digits.*");
     }
 
     public static void assertGenericLiteral(String type)
@@ -850,21 +842,10 @@ public class TestSqlParser
         assertExpression("DECIMAL '+.34'", new DecimalLiteral("+.34"));
         assertExpression("DECIMAL '-.34'", new DecimalLiteral("-.34"));
 
-        assertThatThrownBy(() -> createExpression("123."))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: Unexpected decimal literal: 123.");
-
-        assertThatThrownBy(() -> createExpression("123.0"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: Unexpected decimal literal: 123.0");
-
-        assertThatThrownBy(() -> createExpression(".5"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: Unexpected decimal literal: .5");
-
-        assertThatThrownBy(() -> createExpression("123.5"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: Unexpected decimal literal: 123.5");
+        assertInvalidExpression("123.", "Unexpected decimal literal: 123.");
+        assertInvalidExpression("123.0", "Unexpected decimal literal: 123.0");
+        assertInvalidExpression(".5", "Unexpected decimal literal: .5");
+        assertInvalidExpression("123.5", "Unexpected decimal literal: 123.5");
     }
 
     @Test
@@ -885,13 +866,8 @@ public class TestSqlParser
         assertExpression("format('%s', 'abc')", new Format(ImmutableList.of(new StringLiteral("%s"), new StringLiteral("abc"))));
         assertExpression("format('%d %s', 123, 'x')", new Format(ImmutableList.of(new StringLiteral("%d %s"), new LongLiteral("123"), new StringLiteral("x"))));
 
-        assertThatThrownBy(() -> expression("format()"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: The 'format' function must have at least two arguments");
-
-        assertThatThrownBy(() -> expression("format('%s')"))
-                .isInstanceOf(ParsingException.class)
-                .hasMessage("line 1:1: The 'format' function must have at least two arguments");
+        assertInvalidExpression("format()", "The 'format' function must have at least two arguments");
+        assertInvalidExpression("format('%s')", "The 'format' function must have at least two arguments");
     }
 
     @Test
@@ -1442,22 +1418,22 @@ public class TestSqlParser
 
         assertThat(statement("CREATE TABLE IF NOT EXISTS bar (c VARCHAR, LIKE like_table)"))
                 .ignoringLocation()
-                .isEqualTo(new CreateTable(
-                        QualifiedName.of("bar"),
+                .isEqualTo(new CreateTable(QualifiedName.of("bar"),
                         ImmutableList.of(
                                 new ColumnDefinition(identifier("c"), simpleType(location(1, 35), "VARCHAR"), true, emptyList(), Optional.empty()),
-                                new LikeClause(QualifiedName.of("like_table"), Optional.empty())),
+                                new LikeClause(QualifiedName.of("like_table"),
+                                        Optional.empty())),
                         true,
                         ImmutableList.of(),
                         Optional.empty()));
 
         assertThat(statement("CREATE TABLE IF NOT EXISTS bar (c VARCHAR, LIKE like_table, d BIGINT)"))
                 .ignoringLocation()
-                .isEqualTo(new CreateTable(
-                        QualifiedName.of("bar"),
+                .isEqualTo(new CreateTable(QualifiedName.of("bar"),
                         ImmutableList.of(
                                 new ColumnDefinition(identifier("c"), simpleType(location(1, 35), "VARCHAR"), true, emptyList(), Optional.empty()),
-                                new LikeClause(QualifiedName.of("like_table"), Optional.empty()),
+                                new LikeClause(QualifiedName.of("like_table"),
+                                        Optional.empty()),
                                 new ColumnDefinition(identifier("d"), simpleType(location(1, 63), "BIGINT"), true, emptyList(), Optional.empty())),
                         true,
                         ImmutableList.of(),
@@ -1474,22 +1450,22 @@ public class TestSqlParser
 
         assertThat(statement("CREATE TABLE IF NOT EXISTS bar (c VARCHAR, LIKE like_table EXCLUDING PROPERTIES)"))
                 .ignoringLocation()
-                .isEqualTo(new CreateTable(
-                        QualifiedName.of("bar"),
+                .isEqualTo(new CreateTable(QualifiedName.of("bar"),
                         ImmutableList.of(
                                 new ColumnDefinition(identifier("c"), simpleType(location(1, 35), "VARCHAR"), true, emptyList(), Optional.empty()),
-                                new LikeClause(QualifiedName.of("like_table"), Optional.of(LikeClause.PropertiesOption.EXCLUDING))),
+                                new LikeClause(QualifiedName.of("like_table"),
+                                        Optional.of(LikeClause.PropertiesOption.EXCLUDING))),
                         true,
                         ImmutableList.of(),
                         Optional.empty()));
 
         assertThat(statement("CREATE TABLE IF NOT EXISTS bar (c VARCHAR, LIKE like_table EXCLUDING PROPERTIES) COMMENT 'test'"))
                 .ignoringLocation()
-                .isEqualTo(new CreateTable(
-                        QualifiedName.of("bar"),
+                .isEqualTo(new CreateTable(QualifiedName.of("bar"),
                         ImmutableList.of(
                                 new ColumnDefinition(identifier("c"), simpleType(location(1, 35), "VARCHAR"), true, emptyList(), Optional.empty()),
-                                new LikeClause(QualifiedName.of("like_table"), Optional.of(LikeClause.PropertiesOption.EXCLUDING))),
+                                new LikeClause(QualifiedName.of("like_table"),
+                                        Optional.of(LikeClause.PropertiesOption.EXCLUDING))),
                         true,
                         ImmutableList.of(),
                         Optional.of("test")));
