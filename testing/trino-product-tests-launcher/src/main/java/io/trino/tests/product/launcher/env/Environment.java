@@ -141,6 +141,7 @@ public final class Environment
                     joiner.join(container.getExposedPorts())));
             table.addSeparator();
 
+            System.out.println("\u001B[31m" + "------------------------------------- ENV begin SERVER STARTING!!!!!!!! -------------------------------------" + "\u001B[0m");
             log.info("Started environment %s with containers:\n%s", name, table.render());
 
             // After deepStart all containers should be running and healthy
