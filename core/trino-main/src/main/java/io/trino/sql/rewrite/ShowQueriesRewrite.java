@@ -623,7 +623,7 @@ final class ShowQueriesRewrite
                 return singleValueQuery("Create Schema", formatSql(createSchema).trim());
             }
 
-            throw new UnsupportedOperationException("SHOW CREATE only supported for schemas, tables and views");
+            throw new UnsupportedOperationException("SHOW CREATE only supported for schemas, tables, views and materialized views");
         }
 
         private List<Property> buildProperties(
