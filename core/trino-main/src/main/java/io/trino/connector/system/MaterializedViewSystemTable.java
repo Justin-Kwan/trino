@@ -25,6 +25,7 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.InMemoryRecordSet;
+import io.trino.spi.connector.MaterializedViewFreshness;
 import io.trino.spi.connector.RecordCursor;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SystemTable;
@@ -35,40 +36,31 @@ import javax.inject.Inject;
 import java.util.List;
 import java.util.Set;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.metadata.MetadataListing.getMaterializedViews;
 import static io.trino.metadata.MetadataListing.listCatalogs;
+import static io.trino.metadata.MetadataListing.listMaterializedViews;
 import static io.trino.metadata.MetadataListing.listSchemas;
-import static io.trino.metadata.MetadataUtil.TableMetadataBuilder.tableMetadataBuilder;
 import static io.trino.spi.connector.SystemTable.Distribution.SINGLE_COORDINATOR;
-import static io.trino.spi.type.BooleanType.BOOLEAN;
-import static io.trino.spi.type.VarcharType.createUnboundedVarcharType;
 import static java.util.Objects.requireNonNull;
 
 public class MaterializedViewSystemTable
         implements SystemTable
 {
-    public static final SchemaTableName QUALIFIED_NAME = new SchemaTableName("metadata", "materialized_views");
-    public static final ConnectorTableMetadata TABLE = tableMetadataBuilder(QUALIFIED_NAME)
-            .column("table_catalog", createUnboundedVarcharType())
-            .column("table_schema", createUnboundedVarcharType())
-            .column("materialized_view_name", createUnboundedVarcharType())
-            .column("table_type", createUnboundedVarcharType())
-            .column("is_fresh", BOOLEAN)
-            .column("refreshed_on", createUnboundedVarcharType())
-            .column("owner", createUnboundedVarcharType())
-            .column("text", createUnboundedVarcharType())
-            .column("materialized_view_comment", createUnboundedVarcharType())
-            .build();
+    private final Metadata metadata;
+    private final AccessControl accessControl;
+    private final MaterializedViewRowAdapter materializedViewAdapter;
 
     @Inject
-    public MaterializedViewSystemTable(Metadata metadata, AccessControl accessControl)
+    public MaterializedViewSystemTable(
+            Metadata metadata,
+            AccessControl accessControl,
+            MaterializedViewRowAdapter materializedViewAdapter)
     {
         this.metadata = requireNonNull(metadata, "metadata is null");
         this.accessControl = requireNonNull(accessControl, "accessControl is null");
+        this.materializedViewAdapter = requireNonNull(materializedViewAdapter, "materializedViewAdapter is null");
     }
-
-    private final Metadata metadata;
-    private final AccessControl accessControl;
 
     @Override
     public Distribution getDistribution()
@@ -79,71 +71,69 @@ public class MaterializedViewSystemTable
     @Override
     public ConnectorTableMetadata getTableMetadata()
     {
-        return TABLE;
+        return materializedViewAdapter.getTableLayout();
     }
 
     @Override
-    public RecordCursor cursor(ConnectorTransactionHandle transactionHandle, ConnectorSession connectorSession, TupleDomain<Integer> constraint)
+    public RecordCursor cursor(
+            ConnectorTransactionHandle transactionHandle,
+            ConnectorSession connectorSession,
+            TupleDomain<Integer> constraint)
     {
         Session session = ((FullConnectorSession) connectorSession).getSession();
-        InMemoryRecordSet.Builder outputTable = InMemoryRecordSet.builder(TABLE);
+
+        List<QualifiedObjectName> materializedViewNames = getAllMaterializedViewNames(session);
+        List<MaterializedViewDto> materializedViews = getMaterializedViewsByName(session, materializedViewNames);
+        List<Object[]> materializedViewRows = materializedViewAdapter.toTableRows(materializedViews);
+
+        InMemoryRecordSet.Builder displayTable = InMemoryRecordSet.builder(getTableMetadata());
+        materializedViewRows.forEach(displayTable::addRow);
+
+        return displayTable.build().cursor();
+    }
+
+    private List<QualifiedObjectName> getAllMaterializedViewNames(Session session)
+    {
+        ImmutableList.Builder<QualifiedObjectName> materializedViewNames = ImmutableList.builder();
         Set<String> catalogNames = listCatalogs(session, metadata, accessControl).keySet();
 
         for (String catalogName : catalogNames) {
-            displayMaterializedViewsInCatalog(session, catalogName, outputTable);
+            Set<String> schemaNamesInCatalog = listSchemas(session, metadata, accessControl, catalogName);
+
+            for (String schemaName : schemaNamesInCatalog) {
+                QualifiedTablePrefix materializedViewPrefix = new QualifiedTablePrefix(catalogName, schemaName);
+                materializedViewNames.addAll(getMaterializedViewNamesInSchema(session, materializedViewPrefix));
+            }
         }
 
-        return outputTable.build().cursor();
+        return materializedViewNames.build();
     }
 
-    private void displayMaterializedViewsInCatalog(Session session, String catalogName, InMemoryRecordSet.Builder displayTable)
+    private List<QualifiedObjectName> getMaterializedViewNamesInSchema(Session session, QualifiedTablePrefix prefix)
     {
-        Set<String> schemasInCatalog = listSchemas(session, metadata, accessControl, catalogName);
+        Set<SchemaTableName> materializedViewNames = listMaterializedViews(session, metadata, accessControl, prefix);
 
-        for (String schema : schemasInCatalog) {
-            QualifiedTablePrefix materializedViewPrefix = new QualifiedTablePrefix(catalogName, schema);
-            displayMaterializedViewsInSchema(session, materializedViewPrefix, displayTable);
+        return materializedViewNames.stream()
+                .map(materializedView -> new QualifiedObjectName(
+                        prefix.getCatalogName(),
+                        materializedView.getSchemaName(),
+                        materializedView.getTableName()))
+                .collect(toImmutableList());
+    }
+
+    private List<MaterializedViewDto> getMaterializedViewsByName(Session session, List<QualifiedObjectName> materializedViewNames)
+    {
+        ImmutableList.Builder<MaterializedViewDto> materializedViews = ImmutableList.builder();
+
+        for (QualifiedObjectName name : materializedViewNames) {
+            ConnectorMaterializedViewDefinition definition = getMaterializedViews(session, metadata, accessControl, name
+                    .asQualifiedTablePrefix())
+                    .values().iterator().next();
+
+            MaterializedViewFreshness freshness = metadata.getMaterializedViewFreshness(session, name);
+            materializedViews.add(new MaterializedViewDto(name, definition, freshness));
         }
-    }
 
-    private void displayMaterializedViewsInSchema(
-            Session session,
-            QualifiedTablePrefix materializedViewPrefix,
-            InMemoryRecordSet.Builder displayTable)
-    {
-        List<ConnectorMaterializedViewDefinition> materializedViewsInSchema =
-                getMaterializedViewDefinitions(session, materializedViewPrefix);
-
-        for (ConnectorMaterializedViewDefinition materializedView : materializedViewsInSchema) {
-            displayTable.addRow(
-                    materializedViewPrefix.getCatalogName(),
-                    materializedViewPrefix.getSchemaName(),
-                    materializedViewPrefix.getTableName(),
-                    "MATERIALIZED VIEW",
-                    isMaterializedViewFresh(session, materializedViewPrefix),
-                    "...",
-                    materializedView.getOwner(),
-                    materializedView.getOriginalSql(),
-                    materializedView.getComment());
-        }
-    }
-
-    private boolean isMaterializedViewFresh(Session session, QualifiedTablePrefix tablePrefix)
-    {
-        return metadata.getMaterializedViewFreshness(
-                session,
-                new QualifiedObjectName(
-                        tablePrefix.getCatalogName(),
-                        tablePrefix.getSchemaName().get(),
-                        tablePrefix.getTableName().get()))
-                .isMaterializedViewFresh();
-    }
-
-    private List<ConnectorMaterializedViewDefinition> getMaterializedViewDefinitions(
-            Session session,
-            QualifiedTablePrefix tablePrefix)
-    {
-        return ImmutableList.copyOf(
-                getMaterializedViews(session, metadata, accessControl, tablePrefix).values());
+        return materializedViews.build();
     }
 }

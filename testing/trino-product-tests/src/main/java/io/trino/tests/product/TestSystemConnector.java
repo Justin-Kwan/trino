@@ -14,20 +14,27 @@
 package io.trino.tests.product;
 
 import io.trino.tempto.ProductTest;
+import io.trino.tempto.assertions.QueryAssert;
 import org.testng.annotations.Test;
 
 import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tempto.query.QueryExecutor.query;
+import static io.trino.tests.product.TestGroups.ICEBERG;
 import static io.trino.tests.product.TestGroups.JDBC;
 import static io.trino.tests.product.TestGroups.SYSTEM_CONNECTOR;
+import static java.lang.String.format;
 import static java.sql.JDBCType.ARRAY;
 import static java.sql.JDBCType.BIGINT;
+import static java.sql.JDBCType.BOOLEAN;
 import static java.sql.JDBCType.TIMESTAMP_WITH_TIMEZONE;
 import static java.sql.JDBCType.VARCHAR;
 
 public class TestSystemConnector
         extends ProductTest
 {
+    private static final String MATERIALIZED_VIEW_NAME = "iceberg.default.materialized_view_1";
+    private static final String MATERIALIZED_VIEW_COMMENT = "sarcastic comment";
+
     @Test(groups = {SYSTEM_CONNECTOR, JDBC})
     public void selectRuntimeNodes()
     {
@@ -107,5 +114,84 @@ public class TestSystemConnector
         assertThat(query(sql))
                 .hasColumns(VARCHAR, VARCHAR)
                 .hasAnyRows();
+    }
+
+    @Test(groups = {SYSTEM_CONNECTOR, ICEBERG})
+    public void selectMetadataMaterializedViews()
+    {
+        query(copyTableSql("tpch.tiny.lineitem", "iceberg.default.lineitem"));
+        query(copyTableSql("tpch.tiny.orders", "iceberg.default.orders"));
+        query(createMaterializedViewSql());
+
+        assertThat(query(showMaterializedViewsSql()))
+                .hasColumns(VARCHAR, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, VARCHAR, VARCHAR, VARCHAR)
+                .contains(getMaterializedViewsResultRow(false));
+
+        query(format("REFRESH MATERIALIZED VIEW %s", MATERIALIZED_VIEW_NAME));
+
+        assertThat(query(showMaterializedViewsSql()))
+                .contains(getMaterializedViewsResultRow(true));
+
+        int materializedViewCount = query(showMaterializedViewsSql()).getRowsCount();
+
+        query(format("DROP MATERIALIZED VIEW %s", MATERIALIZED_VIEW_NAME));
+
+        assertThat(query(showMaterializedViewsSql()))
+                .hasRowsCount(materializedViewCount - 1);
+    }
+
+    private static String copyTableSql(String sourceTableName, String destinationTableName)
+    {
+        return format(
+                "CREATE TABLE IF NOT EXISTS %s AS SELECT * FROM %s LIMIT 1000",
+                destinationTableName,
+                sourceTableName);
+    }
+
+    private static String createMaterializedViewSql()
+    {
+        return format(
+                "CREATE OR REPLACE MATERIALIZED VIEW\n" +
+                        " %s\n" +
+                        "COMMENT\n" +
+                        " '%s'\n" +
+                        "AS SELECT\n" +
+                        "  orders.orderkey\n" +
+                        ", orders.custkey\n" +
+                        ", orders.orderstatus\n" +
+                        ", orders.totalprice\n" +
+                        "FROM\n" +
+                        "  (iceberg.default.orders\n" +
+                        "INNER JOIN iceberg.default.lineitem ON (lineitem.orderkey = orders.orderkey))\n" +
+                        "LIMIT 1000\n;",
+                MATERIALIZED_VIEW_NAME,
+                MATERIALIZED_VIEW_COMMENT);
+    }
+
+    private static String showMaterializedViewsSql()
+    {
+        return "SELECT" +
+                "   catalog_name," +
+                "   schema_name," +
+                "   name," +
+                "   table_type," +
+                "   is_fresh," +
+                "   owner," +
+                "   comment," +
+                "   text " +
+                "FROM system.metadata.materialized_views";
+    }
+
+    private static QueryAssert.Row getMaterializedViewsResultRow(boolean isMaterializedViewFresh)
+    {
+        return new QueryAssert.Row(
+                "iceberg",
+                "default",
+                "materialized_view_1",
+                "MATERIALIZED VIEW",
+                isMaterializedViewFresh,
+                "hive",
+                MATERIALIZED_VIEW_COMMENT,
+                createMaterializedViewSql());
     }
 }
