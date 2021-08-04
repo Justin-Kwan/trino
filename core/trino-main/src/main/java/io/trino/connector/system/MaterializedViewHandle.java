@@ -17,20 +17,18 @@ import io.trino.metadata.QualifiedObjectName;
 import io.trino.spi.connector.ConnectorMaterializedViewDefinition;
 import io.trino.spi.connector.MaterializedViewFreshness;
 
-public class MaterializedViewDto
+public class MaterializedViewHandle
 {
-    // required because optional catalog and schema names
-    // are flaky in ConnectorMaterializedViewDefinition.
-    private final QualifiedObjectName fullyQualifiedName;
+    private final QualifiedObjectName materializedView;
     private final ConnectorMaterializedViewDefinition definition;
     private final MaterializedViewFreshness freshness;
 
-    public MaterializedViewDto(
-            QualifiedObjectName fullyQualifiedName,
+    public MaterializedViewHandle(
+            QualifiedObjectName materializedView,
             ConnectorMaterializedViewDefinition definition,
             MaterializedViewFreshness freshness)
     {
-        this.fullyQualifiedName = fullyQualifiedName;
+        this.materializedView = materializedView;
         this.definition = definition;
         this.freshness = freshness;
     }
@@ -42,22 +40,55 @@ public class MaterializedViewDto
 
     public String getName()
     {
-        return fullyQualifiedName.getObjectName();
+        return materializedView.getObjectName();
     }
 
     public String getCatalogName()
     {
-        return fullyQualifiedName.getCatalogName();
+        return materializedView.getCatalogName();
     }
 
     public String getSchemaName()
     {
-        return fullyQualifiedName.getSchemaName();
+        return materializedView.getSchemaName();
     }
 
     public String getTableType()
     {
         return "MATERIALIZED VIEW";
+    }
+
+    public String getStorageCatalog()
+    {
+        if (definition.getStorageTable().isEmpty()) {
+            return "";
+        }
+
+        return definition.getStorageTable().get().getCatalogName();
+    }
+
+    public String getStorageSchema()
+    {
+        if (definition.getStorageTable().isEmpty()) {
+            return "";
+        }
+
+        return definition
+                .getStorageTable().get()
+                .getSchemaTableName()
+                .getSchemaName();
+    }
+
+    public String getStorageTable()
+    {
+        if (definition.getStorageTable().isEmpty()) {
+            return "";
+        }
+
+        return definition
+                .getStorageTable().get()
+                .getSchemaTableName()
+                .getTableName();
     }
 
     public String getOwner()
@@ -70,30 +101,8 @@ public class MaterializedViewDto
         return definition.getComment().orElse("");
     }
 
-    public ConnectorMaterializedViewDefinition getDefinition()
+    public String getOriginalSql()
     {
-        return definition;
-    }
-
-    public String getSqlDefinition()
-    {
-        StringBuilder sqlDefinition = new StringBuilder()
-                .append("CREATE OR REPLACE MATERIALIZED VIEW")
-                .append("\n ")
-                .append(fullyQualifiedName.toString())
-                .append("\n");
-
-        definition.getComment().ifPresent(commentText -> sqlDefinition
-                .append("COMMENT")
-                .append("\n '")
-                .append(commentText)
-                .append("'\n"));
-
-        sqlDefinition
-                .append("AS ")
-                .append(definition.getOriginalSql())
-                .append(";");
-
-        return sqlDefinition.toString();
+        return definition.getOriginalSql();
     }
 }

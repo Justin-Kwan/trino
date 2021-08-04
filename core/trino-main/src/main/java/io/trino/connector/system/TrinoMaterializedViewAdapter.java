@@ -43,25 +43,30 @@ public class TrinoMaterializedViewAdapter
                 new ColumnMetadata("catalog_name", createUnboundedVarcharType()),
                 new ColumnMetadata("schema_name", createUnboundedVarcharType()),
                 new ColumnMetadata("name", createUnboundedVarcharType()),
-                new ColumnMetadata("table_type", createUnboundedVarcharType()),
+                new ColumnMetadata("storage_catalog", createUnboundedVarcharType()),
+                new ColumnMetadata("storage_schema", createUnboundedVarcharType()),
+                new ColumnMetadata("storage_table", createUnboundedVarcharType()),
                 new ColumnMetadata("is_fresh", BOOLEAN),
                 new ColumnMetadata("owner", createUnboundedVarcharType()),
                 new ColumnMetadata("comment", createUnboundedVarcharType()),
                 new ColumnMetadata("text", createUnboundedVarcharType()));
     }
 
-    public List<Object[]> toTableRows(List<MaterializedViewDto> materializedViewDtos)
+    @Override
+    public List<Object[]> toTableRows(List<MaterializedViewHandle> materializedViewHandles)
     {
-        return materializedViewDtos.stream()
-                .map(materializedViewDto -> new Object[] {
-                        materializedViewDto.getCatalogName(),
-                        materializedViewDto.getSchemaName(),
-                        materializedViewDto.getName(),
-                        materializedViewDto.getTableType(),
-                        materializedViewDto.isFresh(),
-                        materializedViewDto.getOwner(),
-                        materializedViewDto.getComment(),
-                        materializedViewDto.getSqlDefinition()
+        return materializedViewHandles.stream()
+                .map(materializedViewHandle -> new Object[] {
+                        materializedViewHandle.getCatalogName(),
+                        materializedViewHandle.getSchemaName(),
+                        materializedViewHandle.getName(),
+                        materializedViewHandle.getStorageCatalog(),
+                        materializedViewHandle.getStorageSchema(),
+                        materializedViewHandle.getStorageTable(),
+                        materializedViewHandle.isFresh(),
+                        materializedViewHandle.getOwner(),
+                        materializedViewHandle.getComment(),
+                        materializedViewHandle.getOriginalSql()
                 })
                 .collect(toImmutableList());
     }

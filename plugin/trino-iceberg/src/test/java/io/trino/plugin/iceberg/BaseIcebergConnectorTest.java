@@ -14,6 +14,7 @@
 package io.trino.plugin.iceberg;
 
 import com.google.common.base.VerifyException;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.trino.Session;
@@ -74,6 +75,7 @@ import static io.trino.plugin.iceberg.IcebergSplitManager.ICEBERG_DOMAIN_COMPACT
 import static io.trino.spi.predicate.Domain.multipleValues;
 import static io.trino.spi.predicate.Domain.singleValue;
 import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.testing.MaterializedResult.resultBuilder;
@@ -95,6 +97,9 @@ import static org.testng.Assert.assertTrue;
 public abstract class BaseIcebergConnectorTest
         extends BaseConnectorTest
 {
+    private static final int STORAGE_TABLE_FIELD_INDEX = 5;
+    private static final String MATERIALIZED_VIEW_COMMENT = "sarcastic comment";
+    private static final String MATERIALIZED_VIEW_NAME = "iceberg.tpch.materialized_view_1";
     private static final Pattern WITH_CLAUSE_EXTRACTOR = Pattern.compile(".*(WITH\\s*\\([^)]*\\))\\s*$", Pattern.DOTALL);
 
     private final FileFormat format;
@@ -210,6 +215,111 @@ public abstract class BaseIcebergConnectorTest
                 .build();
         MaterializedResult actualColumns = computeActual("DESCRIBE orders");
         assertEquals(actualColumns, expectedColumns);
+    }
+
+    @Test
+    public void testMaterializedViewsMetadata()
+    {
+        computeActual(copyTableSql("tpch.tiny.lineitem", "iceberg.tpch.lineitem"));
+        computeActual(copyTableSql("tpch.tiny.orders", "iceberg.tpch.orders"));
+
+        computeActual(createMaterializedViewSql());
+        MaterializedResult showStaleMaterializedViewsResult = computeActual(showMaterializedViewsSql());
+
+        assertThat(showStaleMaterializedViewsResult.getRowCount())
+                .isEqualTo(1);
+
+        assertThat(showStaleMaterializedViewsResult.getTypes())
+                .isEqualTo(ImmutableList.of(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, VARCHAR, VARCHAR, VARCHAR));
+
+        assertMaterializedViewRowEquals(
+                showStaleMaterializedViewsResult.getMaterializedRows().get(0),
+                getMaterializedViewsResultRow(false));
+
+        computeActual(format("REFRESH MATERIALIZED VIEW %s", MATERIALIZED_VIEW_NAME));
+        MaterializedResult showFreshMaterializedViewsResult = computeActual(showMaterializedViewsSql());
+
+        assertThat(showFreshMaterializedViewsResult.getRowCount())
+                .isEqualTo(1);
+
+        assertMaterializedViewRowEquals(
+                showFreshMaterializedViewsResult.getMaterializedRows().get(0),
+                getMaterializedViewsResultRow(true));
+
+        computeActual(format("DROP MATERIALIZED VIEW %s", MATERIALIZED_VIEW_NAME));
+
+        assertThat(query(showMaterializedViewsSql()))
+                .returnsEmptyResult();
+    }
+
+    private static void assertMaterializedViewRowEquals(MaterializedRow actual, MaterializedRow expected)
+    {
+        for (int i = 0; i < actual.getFieldCount(); ++i) {
+            if (i != STORAGE_TABLE_FIELD_INDEX) {
+                assertThat(actual.getField(i)).isEqualTo(expected.getField(i));
+            }
+        }
+    }
+
+    private MaterializedRow getMaterializedViewsResultRow(boolean isMaterializedViewFresh)
+    {
+        return new MaterializedRow(ImmutableList.of(
+                getSession().getCatalog().orElse(""),
+                "tpch",
+                "materialized_view_1",
+                "iceberg",
+                "tpch",
+                "-- storage field index is removed for comparison --",
+                isMaterializedViewFresh,
+                "user",
+                MATERIALIZED_VIEW_COMMENT,
+                selectSourceTableSql()));
+    }
+
+    private String copyTableSql(String sourceTableName, String destinationTableName)
+    {
+        return format(
+                "CREATE TABLE IF NOT EXISTS %s AS SELECT * FROM %s LIMIT 1000",
+                destinationTableName,
+                sourceTableName);
+    }
+
+    private String createMaterializedViewSql()
+    {
+        return format(
+                "CREATE OR REPLACE MATERIALIZED VIEW %s COMMENT '%s' AS %s",
+                MATERIALIZED_VIEW_NAME,
+                MATERIALIZED_VIEW_COMMENT,
+                selectSourceTableSql());
+    }
+
+    private String selectSourceTableSql()
+    {
+        return "SELECT\n" +
+                "  orders.orderkey\n" +
+                ", orders.custkey\n" +
+                ", orders.orderstatus\n" +
+                ", orders.totalprice\n" +
+                "FROM\n" +
+                "  (iceberg.tpch.orders\n" +
+                "INNER JOIN iceberg.tpch.lineitem ON (lineitem.orderkey = orders.orderkey))\n" +
+                "LIMIT 1000\n";
+    }
+
+    private static String showMaterializedViewsSql()
+    {
+        return "SELECT" +
+                "   catalog_name," +
+                "   schema_name," +
+                "   name," +
+                "   storage_catalog," +
+                "   storage_schema," +
+                "   storage_table," +
+                "   is_fresh," +
+                "   owner," +
+                "   comment," +
+                "   text " +
+                "FROM system.metadata.materialized_views";
     }
 
     @Override

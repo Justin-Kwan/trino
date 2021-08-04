@@ -16,6 +16,7 @@ package io.trino.connector.system;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.trino.metadata.QualifiedObjectName;
+import io.trino.spi.connector.CatalogSchemaTableName;
 import io.trino.spi.connector.ConnectorMaterializedViewDefinition;
 import io.trino.spi.connector.MaterializedViewFreshness;
 import io.trino.spi.type.TypeId;
@@ -43,20 +44,72 @@ public class TestTrinoMaterializedViewAdapter
             "test_catalog_name_2",
             "test_schema_name_2",
             "test_schema_name_2");
+    private static final CatalogSchemaTableName STORAGE_TABLE_NAME = new CatalogSchemaTableName(
+            "test_catalog",
+            "test_schema",
+            "test_table");
 
     private static final MaterializedViewRowAdapter MATERIALIZED_VIEW_ROW_ADAPTER =
             new TrinoMaterializedViewAdapter();
 
-    private static MaterializedViewDto createMaterializedViewDto(
+    @DataProvider
+    public Object[][] getTestMaterializedViewHandles()
+    {
+        return new Object[][] {
+                {
+                        ImmutableList.of(),
+                        ImmutableList.of()
+                },
+                {
+                        ImmutableList.of(
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false)),
+                        ImmutableList.of(
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false))
+                },
+                {
+                        ImmutableList.of(
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false),
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_2, Optional.of(MATERIALIZED_VIEW_COMMENT_2), true)),
+                        ImmutableList.of(
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false),
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(MATERIALIZED_VIEW_COMMENT_2), true))
+                },
+                {
+                        ImmutableList.of(
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_2, Optional.empty(), true)),
+                        ImmutableList.of(
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.empty(), true))
+                },
+                {
+                        ImmutableList.of(
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
+                                createMaterializedViewHandle(FULLY_QUALIFIED_NAME_2, Optional.empty(), false)),
+                        ImmutableList.of(
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
+                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.empty(), false))
+                }
+        };
+    }
+
+    @Test(dataProvider = "getTestMaterializedViewHandles")
+    public void toTableRows(List<MaterializedViewHandle> materializedViewHandles, List<Object[]> materializedViewRows)
+    {
+        assertThat(MATERIALIZED_VIEW_ROW_ADAPTER.toTableRows(materializedViewHandles))
+                .isEqualToComparingFieldByFieldRecursively(materializedViewRows);
+    }
+
+    private static MaterializedViewHandle createMaterializedViewHandle(
             QualifiedObjectName fullyQualifiedName,
             Optional<String> comment,
             boolean isFresh)
     {
-        return new MaterializedViewDto(
+        return new MaterializedViewHandle(
                 fullyQualifiedName,
                 new ConnectorMaterializedViewDefinition(
                         SELECT_SOURCE_TABLE_SQL,
-                        Optional.of(fullyQualifiedName.asCatalogSchemaTableName()),
+                        Optional.of(STORAGE_TABLE_NAME),
                         Optional.of(fullyQualifiedName.getCatalogName()),
                         Optional.of(fullyQualifiedName.getSchemaName()),
                         ImmutableList.of(new ConnectorMaterializedViewDefinition.Column("test_column", TypeId.of("test_type"))),
@@ -66,90 +119,19 @@ public class TestTrinoMaterializedViewAdapter
                 new MaterializedViewFreshness(isFresh));
     }
 
-    private static Object createMaterializedViewRow(
-            QualifiedObjectName fullyQualifiedName,
-            Optional<String> comment,
-            boolean isFresh)
+    private static Object createMaterializedViewRow(QualifiedObjectName fullyQualifiedName, Optional<String> comment, boolean isFresh)
     {
         return new Object[] {
                 fullyQualifiedName.getCatalogName(),
                 fullyQualifiedName.getSchemaName(),
                 fullyQualifiedName.getObjectName(),
-                "MATERIALIZED VIEW",
+                STORAGE_TABLE_NAME.getCatalogName(),
+                STORAGE_TABLE_NAME.getSchemaTableName().getSchemaName(),
+                STORAGE_TABLE_NAME.getSchemaTableName().getTableName(),
                 isFresh,
                 MATERIALIZED_VIEW_OWNER,
                 comment.orElse(""),
-                getMaterializedViewSqlDefinition(fullyQualifiedName, comment)
+                SELECT_SOURCE_TABLE_SQL
         };
-    }
-
-    public static String getMaterializedViewSqlDefinition(QualifiedObjectName fullyQualifiedName, Optional<String> comment)
-    {
-        StringBuilder sqlDefinition = new StringBuilder()
-                .append("CREATE OR REPLACE MATERIALIZED VIEW")
-                .append("\n ")
-                .append(fullyQualifiedName.toString())
-                .append("\n");
-
-        comment.ifPresent(commentText -> sqlDefinition
-                .append("COMMENT")
-                .append("\n '")
-                .append(commentText)
-                .append("'\n"));
-
-        sqlDefinition
-                .append("AS ")
-                .append(SELECT_SOURCE_TABLE_SQL)
-                .append(";");
-
-        return sqlDefinition.toString();
-    }
-
-    @DataProvider
-    public Object[][] getTestMaterializedViewDtos()
-    {
-        return new Object[][] {
-                {
-                        ImmutableList.of(),
-                        ImmutableList.of()
-                },
-                {
-                        ImmutableList.of(
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false)),
-                        ImmutableList.of(
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false))
-                },
-                {
-                        ImmutableList.of(
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false),
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_2, Optional.of(MATERIALIZED_VIEW_COMMENT_2), true)),
-                        ImmutableList.of(
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_1, Optional.of(MATERIALIZED_VIEW_COMMENT_1), false),
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(MATERIALIZED_VIEW_COMMENT_2), true))
-                },
-                {
-                        ImmutableList.of(
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_2, Optional.empty(), true)),
-                        ImmutableList.of(
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.empty(), true))
-                },
-                {
-                        ImmutableList.of(
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
-                                createMaterializedViewDto(FULLY_QUALIFIED_NAME_2, Optional.empty(), false)),
-                        ImmutableList.of(
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.of(EMPTY_COMMENT), true),
-                                createMaterializedViewRow(FULLY_QUALIFIED_NAME_2, Optional.empty(), false))
-                }
-        };
-    }
-
-    @Test(dataProvider = "getTestMaterializedViewDtos")
-    public void toTableRows(List<MaterializedViewDto> materializedViewDtos, List<Object[]> materializedViewRows)
-    {
-        assertThat(MATERIALIZED_VIEW_ROW_ADAPTER.toTableRows(materializedViewDtos))
-                .isEqualToComparingFieldByFieldRecursively(materializedViewRows);
     }
 }

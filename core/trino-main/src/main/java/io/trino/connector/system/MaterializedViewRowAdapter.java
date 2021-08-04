@@ -31,5 +31,5 @@ public interface MaterializedViewRowAdapter
 
     List<ColumnMetadata> getTableColumns();
 
-    List<Object[]> toTableRows(List<MaterializedViewDto> materializedViewRowDto);
+    List<Object[]> toTableRows(List<MaterializedViewHandle> materializedViewHandles);
 }

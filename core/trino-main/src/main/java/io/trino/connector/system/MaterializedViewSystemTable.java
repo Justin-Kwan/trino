@@ -33,13 +33,16 @@ import io.trino.spi.predicate.TupleDomain;
 
 import javax.inject.Inject;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
-import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.connector.system.jdbc.FilterUtil.tablePrefix;
+import static io.trino.connector.system.jdbc.FilterUtil.tryGetSingleVarcharValue;
 import static io.trino.metadata.MetadataListing.getMaterializedViews;
 import static io.trino.metadata.MetadataListing.listCatalogs;
-import static io.trino.metadata.MetadataListing.listMaterializedViews;
 import static io.trino.metadata.MetadataListing.listSchemas;
 import static io.trino.spi.connector.SystemTable.Distribution.SINGLE_COORDINATOR;
 import static java.util.Objects.requireNonNull;
@@ -82,58 +85,54 @@ public class MaterializedViewSystemTable
     {
         Session session = ((FullConnectorSession) connectorSession).getSession();
 
-        List<QualifiedObjectName> materializedViewNames = getAllMaterializedViewNames(session);
-        List<MaterializedViewDto> materializedViews = getMaterializedViewsByName(session, materializedViewNames);
+        List<MaterializedViewHandle> materializedViews = getAllMaterializedViews(session, constraint);
         List<Object[]> materializedViewRows = materializedViewAdapter.toTableRows(materializedViews);
 
         InMemoryRecordSet.Builder displayTable = InMemoryRecordSet.builder(getTableMetadata());
-        materializedViewRows.forEach(displayTable::addRow);
+        materializedViewRows.forEach(s -> {
+            System.out.println("rows : " + Arrays.toString(s));
+            displayTable.addRow(s);
+        });
 
         return displayTable.build().cursor();
     }
 
-    private List<QualifiedObjectName> getAllMaterializedViewNames(Session session)
+    private List<MaterializedViewHandle> getAllMaterializedViews(Session session, TupleDomain<Integer> constraint)
     {
-        ImmutableList.Builder<QualifiedObjectName> materializedViewNames = ImmutableList.builder();
-        Set<String> catalogNames = listCatalogs(session, metadata, accessControl).keySet();
+        ImmutableList.Builder<MaterializedViewHandle> materializedViews = ImmutableList.builder();
+
+        Optional<String> catalogNameFilter = tryGetSingleVarcharValue(constraint, 0);
+        Optional<String> schemaNameFilter = tryGetSingleVarcharValue(constraint, 1);
+        Optional<String> tableNameFilter = tryGetSingleVarcharValue(constraint, 2);
+
+        Set<String> catalogNames = listCatalogs(session, metadata, accessControl, catalogNameFilter).keySet();
 
         for (String catalogName : catalogNames) {
-            Set<String> schemaNamesInCatalog = listSchemas(session, metadata, accessControl, catalogName);
-
-            for (String schemaName : schemaNamesInCatalog) {
-                QualifiedTablePrefix materializedViewPrefix = new QualifiedTablePrefix(catalogName, schemaName);
-                materializedViewNames.addAll(getMaterializedViewNamesInSchema(session, materializedViewPrefix));
+            for (String schemaName : listSchemas(session, metadata, accessControl, catalogName, schemaNameFilter)) {
+                QualifiedTablePrefix materializedViewPrefix = tablePrefix(catalogName, Optional.ofNullable(schemaName), tableNameFilter);
+                materializedViews.addAll(getMaterializedViewsInSchema(session, materializedViewPrefix));
             }
         }
 
-        return materializedViewNames.build();
+        return materializedViews.build();
     }
 
-    private List<QualifiedObjectName> getMaterializedViewNamesInSchema(Session session, QualifiedTablePrefix prefix)
+    private List<MaterializedViewHandle> getMaterializedViewsInSchema(Session session, QualifiedTablePrefix materializedViewPrefix)
     {
-        Set<SchemaTableName> materializedViewNames = listMaterializedViews(session, metadata, accessControl, prefix);
+        ImmutableList.Builder<MaterializedViewHandle> materializedViewsInSchema = ImmutableList.builder();
+        Map<SchemaTableName, ConnectorMaterializedViewDefinition> definitionsInSchema =
+                getMaterializedViews(session, metadata, accessControl, materializedViewPrefix);
 
-        return materializedViewNames.stream()
-                .map(materializedView -> new QualifiedObjectName(
-                        prefix.getCatalogName(),
-                        materializedView.getSchemaName(),
-                        materializedView.getTableName()))
-                .collect(toImmutableList());
-    }
-
-    private List<MaterializedViewDto> getMaterializedViewsByName(Session session, List<QualifiedObjectName> materializedViewNames)
-    {
-        ImmutableList.Builder<MaterializedViewDto> materializedViews = ImmutableList.builder();
-
-        for (QualifiedObjectName name : materializedViewNames) {
-            ConnectorMaterializedViewDefinition definition = getMaterializedViews(session, metadata, accessControl, name
-                    .asQualifiedTablePrefix())
-                    .values().iterator().next();
+        for (Map.Entry<SchemaTableName, ConnectorMaterializedViewDefinition> definition : definitionsInSchema.entrySet()) {
+            QualifiedObjectName name = new QualifiedObjectName(
+                    materializedViewPrefix.getCatalogName(),
+                    definition.getKey().getSchemaName(),
+                    definition.getKey().getTableName());
 
             MaterializedViewFreshness freshness = metadata.getMaterializedViewFreshness(session, name);
-            materializedViews.add(new MaterializedViewDto(name, definition, freshness));
+            materializedViewsInSchema.add(new MaterializedViewHandle(name, definition.getValue(), freshness));
         }
 
-        return materializedViews.build();
+        return materializedViewsInSchema.build();
     }
 }
