@@ -58,7 +58,6 @@ public class SystemConnectorModule
         globalTableBinder.addBinding().to(AnalyzePropertiesSystemTable.class).in(Scopes.SINGLETON);
         globalTableBinder.addBinding().to(TransactionsSystemTable.class).in(Scopes.SINGLETON);
         globalTableBinder.addBinding().to(RuleStatsSystemTable.class).in(Scopes.SINGLETON);
-
         globalTableBinder.addBinding().to(AttributeJdbcTable.class).in(Scopes.SINGLETON);
         globalTableBinder.addBinding().to(CatalogJdbcTable.class).in(Scopes.SINGLETON);
         globalTableBinder.addBinding().to(ColumnJdbcTable.class).in(Scopes.SINGLETON);
@@ -79,6 +78,7 @@ public class SystemConnectorModule
 
         binder.bind(GlobalSystemConnectorFactory.class).in(Scopes.SINGLETON);
         binder.bind(SystemConnectorRegistrar.class).asEagerSingleton();
+        binder.bind(MaterializedViewRowAdapter.class).to(TrinoMaterializedViewAdapter.class).in(Scopes.SINGLETON);
     }
 
     @ProvidesIntoSet
