@@ -22,6 +22,7 @@ import org.apache.parquet.hadoop.ParquetWriter;
 
 public class ParquetWriterConfig
 {
+    private double defaultBloomFilterFpp = 0.05;
     private boolean parquetOptimizedWriterEnabled;
 
     private DataSize blockSize = DataSize.ofBytes(ParquetWriter.DEFAULT_BLOCK_SIZE);
@@ -38,6 +39,11 @@ public class ParquetWriterConfig
     {
         this.blockSize = blockSize;
         return this;
+    }
+
+    public double getDefaultBloomFilterFpp()
+    {
+        return defaultBloomFilterFpp;
     }
 
     public DataSize getPageSize()
@@ -67,11 +73,20 @@ public class ParquetWriterConfig
         return this;
     }
 
+    @Config("parquet.bloom-filter-fpp")
+    @ConfigDescription("Parquet Bloom filter false positive probability")
+    public ParquetWriterConfig setDefaultBloomFilterFpp(double defaultBloomFilterFpp)
+    {
+        this.defaultBloomFilterFpp = defaultBloomFilterFpp;
+        return this;
+    }
+
     public ParquetWriterOptions toParquetWriterOptions()
     {
         return ParquetWriterOptions.builder()
                 .setMaxBlockSize(getBlockSize())
                 .setMaxPageSize(getPageSize())
+                .setBloomFilterFpp(getDefaultBloomFilterFpp())
                 .build();
     }
 }

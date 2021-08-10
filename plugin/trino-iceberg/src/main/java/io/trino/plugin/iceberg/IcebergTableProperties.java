@@ -27,6 +27,7 @@ import java.util.Optional;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.session.PropertyMetadata.enumProperty;
+import static io.trino.spi.session.PropertyMetadata.listProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Locale.ENGLISH;
@@ -49,17 +50,9 @@ public class IcebergTableProperties
                         FileFormat.class,
                         icebergConfig.getFileFormat(),
                         false))
-                .add(new PropertyMetadata<>(
+                .add(listProperty(
                         PARTITIONING_PROPERTY,
-                        "Partition transforms",
-                        new ArrayType(VARCHAR),
-                        List.class,
-                        ImmutableList.of(),
-                        false,
-                        value -> ((Collection<?>) value).stream()
-                                .map(name -> ((String) name).toLowerCase(ENGLISH))
-                                .collect(toImmutableList()),
-                        value -> value))
+                        "Partition transforms"))
                 .add(stringProperty(
                         LOCATION_PROPERTY,
                         "File system location URI for the table",

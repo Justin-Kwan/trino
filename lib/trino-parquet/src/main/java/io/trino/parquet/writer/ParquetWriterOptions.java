@@ -13,14 +13,23 @@
  */
 package io.trino.parquet.writer;
 
+import com.google.common.collect.ImmutableSet;
 import io.airlift.units.DataSize;
 import org.apache.parquet.hadoop.ParquetWriter;
 
+import java.util.Set;
+
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.lang.Math.toIntExact;
 import static java.util.Objects.requireNonNull;
 
 public class ParquetWriterOptions
 {
+    /**
+     * The same fpp is used by parquet-mr:
+     * https://github.com/apache/parquet-mr/blob/5608695f5777de1eb0899d9075ec9411cfdf31d3/parquet-column/src/main/java/org/apache/parquet/column/values/bloomfilter/BlockSplitBloomFilter.java#L60
+     */g
+    private static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
     private static final DataSize DEFAULT_MAX_ROW_GROUP_SIZE = DataSize.ofBytes(ParquetWriter.DEFAULT_BLOCK_SIZE);
     private static final DataSize DEFAULT_MAX_PAGE_SIZE = DataSize.ofBytes(ParquetWriter.DEFAULT_PAGE_SIZE);
 
@@ -31,11 +40,15 @@ public class ParquetWriterOptions
 
     private final int maxRowGroupSize;
     private final int maxPageSize;
+    private final double bloomFilterFpp;
+    private final Set<String> bloomFilterColumns;
 
-    private ParquetWriterOptions(DataSize maxBlockSize, DataSize maxPageSize)
+    private ParquetWriterOptions(DataSize maxBlockSize, DataSize maxPageSize, Set<String> bloomFilterColumns, double bloomFilterFpp)
     {
         this.maxRowGroupSize = toIntExact(requireNonNull(maxBlockSize, "maxBlockSize is null").toBytes());
         this.maxPageSize = toIntExact(requireNonNull(maxPageSize, "maxPageSize is null").toBytes());
+        this.bloomFilterColumns = ImmutableSet.copyOf(bloomFilterColumns);
+        this.bloomFilterFpp = bloomFilterFpp;
     }
 
     public long getMaxRowGroupSize()
@@ -48,14 +61,49 @@ public class ParquetWriterOptions
         return maxPageSize;
     }
 
+    public boolean isBloomFilterEnabled()
+    {
+        return !bloomFilterColumns.isEmpty();
+    }
+
+    public boolean isBloomFilterColumn(String columnName)
+    {
+        return bloomFilterColumns.contains(columnName);
+    }
+
+    public double getBloomFilterFpp()
+    {
+        return this.bloomFilterFpp;
+    }
+
+    public Set<String> getBloomFilterColumns()
+    {
+        return this.bloomFilterColumns;
+    }
+
     public static class Builder
     {
         private DataSize maxBlockSize = DEFAULT_MAX_ROW_GROUP_SIZE;
         private DataSize maxPageSize = DEFAULT_MAX_PAGE_SIZE;
+        private double bloomFilterFpp = DEFAULT_BLOOM_FILTER_FPP;
+        private Set<String> bloomFilterColumns = ImmutableSet.of();
 
         public Builder setMaxBlockSize(DataSize maxBlockSize)
         {
             this.maxBlockSize = maxBlockSize;
+            return this;
+        }
+
+        public Builder setBloomFilterColumns(Set<String> columns)
+        {
+            this.bloomFilterColumns = columns;
+            return this;
+        }
+
+        public Builder setBloomFilterFpp(double value)
+        {
+            checkArgument(value > 0.0 && value < 1.0, "False positive probability should be between 0 and 1");
+            this.bloomFilterFpp = value;
             return this;
         }
 
@@ -67,7 +115,7 @@ public class ParquetWriterOptions
 
         public ParquetWriterOptions build()
         {
-            return new ParquetWriterOptions(maxBlockSize, maxPageSize);
+            return new ParquetWriterOptions(maxBlockSize, maxPageSize, bloomFilterColumns, bloomFilterFpp);
         }
     }
 }

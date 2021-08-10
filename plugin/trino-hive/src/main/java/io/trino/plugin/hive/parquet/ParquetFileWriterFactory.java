@@ -14,7 +14,6 @@
 package io.trino.plugin.hive.parquet;
 
 import io.trino.parquet.writer.ParquetSchemaConverter;
-import io.trino.parquet.writer.ParquetWriterOptions;
 import io.trino.plugin.hive.FileWriter;
 import io.trino.plugin.hive.HdfsEnvironment;
 import io.trino.plugin.hive.HiveFileWriterFactory;

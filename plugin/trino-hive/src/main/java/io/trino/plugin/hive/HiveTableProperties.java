@@ -16,6 +16,7 @@ package io.trino.plugin.hive;
 import com.google.common.collect.ImmutableList;
 import io.trino.plugin.hive.metastore.SortingColumn;
 import io.trino.plugin.hive.orc.OrcWriterConfig;
+import io.trino.plugin.hive.parquet.ParquetWriterConfig;
 import io.trino.plugin.hive.util.HiveBucketing.BucketingVersion;
 import io.trino.plugin.hive.util.HiveUtil;
 import io.trino.spi.TrinoException;
@@ -37,10 +38,10 @@ import static io.trino.spi.session.PropertyMetadata.booleanProperty;
 import static io.trino.spi.session.PropertyMetadata.doubleProperty;
 import static io.trino.spi.session.PropertyMetadata.enumProperty;
 import static io.trino.spi.session.PropertyMetadata.integerProperty;
+import static io.trino.spi.session.PropertyMetadata.listProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.String.format;
-import static java.util.Locale.ENGLISH;
 
 public class HiveTableProperties
 {
@@ -88,28 +89,8 @@ public class HiveTableProperties
                         HiveStorageFormat.class,
                         config.getHiveStorageFormat(),
                         false),
-                new PropertyMetadata<>(
-                        PARTITIONED_BY_PROPERTY,
-                        "Partition columns",
-                        new ArrayType(VARCHAR),
-                        List.class,
-                        ImmutableList.of(),
-                        false,
-                        value -> ((List<?>) value).stream()
-                                .map(name -> ((String) name).toLowerCase(ENGLISH))
-                                .collect(toImmutableList()),
-                        value -> value),
-                new PropertyMetadata<>(
-                        BUCKETED_BY_PROPERTY,
-                        "Bucketing columns",
-                        new ArrayType(VARCHAR),
-                        List.class,
-                        ImmutableList.of(),
-                        false,
-                        value -> ((List<?>) value).stream()
-                                .map(name -> ((String) name).toLowerCase(ENGLISH))
-                                .collect(toImmutableList()),
-                        value -> value),
+                listProperty(PARTITIONED_BY_PROPERTY, "Partition columns"),
+                listProperty(BUCKETED_BY_PROPERTY, "Bucketing columns"),
                 new PropertyMetadata<>(
                         SORTED_BY_PROPERTY,
                         "Bucket sorting columns",
@@ -125,18 +106,9 @@ public class HiveTableProperties
                                 .map(SortingColumn.class::cast)
                                 .map(HiveUtil::sortingColumnToString)
                                 .collect(toImmutableList())),
-                new PropertyMetadata<>(
+                listProperty(
                         ORC_BLOOM_FILTER_COLUMNS,
-                        "ORC Bloom filter index columns",
-                        new ArrayType(VARCHAR),
-                        List.class,
-                        ImmutableList.of(),
-                        false,
-                        value -> ((List<?>) value).stream()
-                                .map(String.class::cast)
-                                .map(name -> name.toLowerCase(ENGLISH))
-                                .collect(toImmutableList()),
-                        value -> value),
+                        "ORC Bloom filter index columns"),
                 doubleProperty(
                         ORC_BLOOM_FILTER_FPP,
                         "ORC Bloom filter false positive probability",
