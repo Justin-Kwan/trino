@@ -14,20 +14,20 @@
 package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableList;
+import io.trino.plugin.hive.parquet.ParquetWriterConfig;
 import io.trino.spi.session.PropertyMetadata;
 import io.trino.spi.type.ArrayType;
 import org.apache.iceberg.FileFormat;
 
 import javax.inject.Inject;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.spi.session.PropertyMetadata.doubleProperty;
 import static io.trino.spi.session.PropertyMetadata.enumProperty;
-import static io.trino.spi.session.PropertyMetadata.listProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Locale.ENGLISH;
@@ -37,11 +37,13 @@ public class IcebergTableProperties
     public static final String FILE_FORMAT_PROPERTY = "format";
     public static final String PARTITIONING_PROPERTY = "partitioning";
     public static final String LOCATION_PROPERTY = "location";
+    public static final String PARQUET_BLOOM_FILTER_COLUMNS = "parquet_bloom_filter_columns";
+    public static final String PARQUET_BLOOM_FILTER_FPP = "parquet_bloom_filter_fpp";
 
     private final List<PropertyMetadata<?>> tableProperties;
 
     @Inject
-    public IcebergTableProperties(IcebergConfig icebergConfig)
+    public IcebergTableProperties(IcebergConfig icebergConfig, ParquetWriterConfig parquetWriterConfig)
     {
         tableProperties = ImmutableList.<PropertyMetadata<?>>builder()
                 .add(enumProperty(
@@ -50,13 +52,37 @@ public class IcebergTableProperties
                         FileFormat.class,
                         icebergConfig.getFileFormat(),
                         false))
-                .add(listProperty(
+                .add(new PropertyMetadata<>(
                         PARTITIONING_PROPERTY,
-                        "Partition transforms"))
+                        "Partition transforms",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(name -> ((String) name).toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value))
                 .add(stringProperty(
                         LOCATION_PROPERTY,
                         "File system location URI for the table",
                         null,
+                        false))
+                .add(new PropertyMetadata<>(
+                        PARQUET_BLOOM_FILTER_COLUMNS,
+                        "Parquet Bloom filter index columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(name -> ((String) name).toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value))
+                .add(doubleProperty(
+                        PARQUET_BLOOM_FILTER_FPP,
+                        "Parquet Bloom filter false positive probability",
+                        parquetWriterConfig.getDefaultBloomFilterFpp(),
                         false))
                 .build();
     }
@@ -78,7 +104,18 @@ public class IcebergTableProperties
         return partitioning == null ? ImmutableList.of() : ImmutableList.copyOf(partitioning);
     }
 
-    public static Optional<String> getTableLocation(Map<String, Object> tableProperties)
+    @SuppressWarnings("unchecked")
+    public static List<String> getParquetBloomFilterColumns(Map<String, Object> tableProperties)
+    {
+        return (List<String>) tableProperties.get(PARQUET_BLOOM_FILTER_COLUMNS);
+    }
+
+    public static Double getParquetBloomFilterFpp(Map<String, Object> tableProperties)
+    {
+        return (Double) tableProperties.get(PARQUET_BLOOM_FILTER_FPP);
+    }
+
+    public static String getTableLocation(Map<String, Object> tableProperties)
     {
         return Optional.ofNullable((String) tableProperties.get(LOCATION_PROPERTY));
     }

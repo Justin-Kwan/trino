@@ -22,6 +22,7 @@ import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.connector.ConnectorPageSinkProvider;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.SchemaTableName;
 import org.apache.iceberg.PartitionSpec;
@@ -41,6 +42,7 @@ public class IcebergPageSinkProvider
     private final HdfsEnvironment hdfsEnvironment;
     private final JsonCodec<CommitTaskData> jsonCodec;
     private final IcebergFileWriterFactory fileWriterFactory;
+    private final IcebergTransactionManager transactionManager;
     private final PageIndexerFactory pageIndexerFactory;
     private final int maxOpenPartitions;
 
@@ -49,12 +51,14 @@ public class IcebergPageSinkProvider
             HdfsEnvironment hdfsEnvironment,
             JsonCodec<CommitTaskData> jsonCodec,
             IcebergFileWriterFactory fileWriterFactory,
+            IcebergTransactionManager transactionManager,
             PageIndexerFactory pageIndexerFactory,
             IcebergConfig config)
     {
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
         this.fileWriterFactory = requireNonNull(fileWriterFactory, "fileWriterFactory is null");
+        this.transactionManager = requireNonNull(transactionManager, "transactionManager is null");
         this.pageIndexerFactory = requireNonNull(pageIndexerFactory, "pageIndexerFactory is null");
         requireNonNull(config, "config is null");
         this.maxOpenPartitions = config.getMaxPartitionsPerWriter();
@@ -63,26 +67,31 @@ public class IcebergPageSinkProvider
     @Override
     public ConnectorPageSink createPageSink(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorOutputTableHandle outputTableHandle)
     {
-        return createPageSink(session, (IcebergWritableTableHandle) outputTableHandle);
+        return createPageSink(transactionHandle, session, (IcebergWritableTableHandle) outputTableHandle);
     }
 
     @Override
     public ConnectorPageSink createPageSink(ConnectorTransactionHandle transactionHandle, ConnectorSession session, ConnectorInsertTableHandle insertTableHandle)
     {
-        return createPageSink(session, (IcebergWritableTableHandle) insertTableHandle);
+        return createPageSink(transactionHandle, session, (IcebergWritableTableHandle) insertTableHandle);
     }
 
-    private ConnectorPageSink createPageSink(ConnectorSession session, IcebergWritableTableHandle tableHandle)
+    private ConnectorPageSink createPageSink(ConnectorTransactionHandle transactionHandle, ConnectorSession session, IcebergWritableTableHandle tableHandle)
     {
         HdfsContext hdfsContext = new HdfsContext(session);
         Schema schema = SchemaParser.fromJson(tableHandle.getSchemaAsJson());
         PartitionSpec partitionSpec = PartitionSpecParser.fromJson(schema, tableHandle.getPartitionSpecAsJson());
         LocationProvider locationProvider = getLocationProvider(new SchemaTableName(tableHandle.getSchemaName(), tableHandle.getTableName()),
                 tableHandle.getOutputPath(), tableHandle.getStorageProperties());
+
+        IcebergMetadata connectorMetadata = transactionManager.get(transactionHandle);
+        ConnectorTableMetadata tableMetadata = connectorMetadata.getTableMetadata(session, tableHandle.getSchemaTableName());
+
         return new IcebergPageSink(
                 schema,
                 partitionSpec,
                 locationProvider,
+                tableMetadata,
                 fileWriterFactory,
                 pageIndexerFactory,
                 hdfsEnvironment,

@@ -18,6 +18,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
+import io.trino.spi.connector.SchemaTableName;
 import org.apache.iceberg.FileFormat;
 
 import java.util.List;
@@ -68,6 +69,11 @@ public class IcebergWritableTableHandle
     public String getTableName()
     {
         return tableName;
+    }
+
+    public SchemaTableName getSchemaTableName()
+    {
+        return new SchemaTableName(getSchemaName(), getTableName());
     }
 
     @JsonProperty

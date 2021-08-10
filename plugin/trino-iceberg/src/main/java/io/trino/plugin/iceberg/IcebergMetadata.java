@@ -89,6 +89,8 @@ import static io.trino.plugin.iceberg.ExpressionConverter.toIcebergExpression;
 import static io.trino.plugin.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_INVALID_METADATA;
 import static io.trino.plugin.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
+import static io.trino.plugin.iceberg.IcebergTableProperties.PARQUET_BLOOM_FILTER_COLUMNS;
+import static io.trino.plugin.iceberg.IcebergTableProperties.PARQUET_BLOOM_FILTER_FPP;
 import static io.trino.plugin.iceberg.IcebergTableProperties.PARTITIONING_PROPERTY;
 import static io.trino.plugin.iceberg.IcebergUtil.deserializePartitionValue;
 import static io.trino.plugin.iceberg.IcebergUtil.getColumns;
@@ -111,6 +113,24 @@ import static java.util.stream.Collectors.joining;
 public class IcebergMetadata
         implements ConnectorMetadata
 {
+    private static final Logger log = Logger.get(IcebergMetadata.class);
+    private static final String ICEBERG_MATERIALIZED_VIEW_COMMENT = "Presto Materialized View";
+    public static final String DEPENDS_ON_TABLES = "dependsOnTables";
+
+    // Be compatible with views defined by the Hive connector, which can be useful under certain conditions.
+    private static final String TRINO_CREATED_BY = HiveMetadata.TRINO_CREATED_BY;
+    private static final String TRINO_CREATED_BY_VALUE = "Trino Iceberg connector";
+    private static final String PRESTO_VIEW_COMMENT = HiveMetadata.PRESTO_VIEW_COMMENT;
+    private static final String PRESTO_VERSION_NAME = HiveMetadata.PRESTO_VERSION_NAME;
+    private static final String PRESTO_QUERY_ID_NAME = HiveMetadata.PRESTO_QUERY_ID_NAME;
+    private static final String PRESTO_VIEW_EXPANDED_TEXT_MARKER = HiveMetadata.PRESTO_VIEW_EXPANDED_TEXT_MARKER;
+
+    private static final String PARQUET_BLOOM_FILTER_COLUMNS_KEY = "parquet.bloom.filter.columns";
+    private static final String PARQUET_BLOOM_FILTER_FPP_KEY = "parquet.bloom.filter.fpp";
+
+    private final CatalogName catalogName;
+    private final HiveMetastore metastore;
+    private final HdfsEnvironment hdfsEnvironment;
     private final TypeManager typeManager;
     private final JsonCodec<CommitTaskData> commitTaskCodec;
     private final TrinoCatalog catalog;
@@ -523,7 +543,7 @@ public class IcebergMetadata
     /**
      * @throws TableNotFoundException when table cannot be found
      */
-    private ConnectorTableMetadata getTableMetadata(ConnectorSession session, SchemaTableName table)
+    public ConnectorTableMetadata getTableMetadata(ConnectorSession session, SchemaTableName table)
     {
         Table icebergTable = catalog.loadTable(session, table);
 
@@ -535,10 +555,38 @@ public class IcebergMetadata
             properties.put(PARTITIONING_PROPERTY, toPartitionFields(icebergTable.spec()));
         }
 
+        getParquetBloomFilterProperties(session, table, properties);
+
         return new ConnectorTableMetadata(table, columns, properties.build(), getTableComment(icebergTable));
     }
 
-    private List<ColumnMetadata> getColumnMetadatas(Table table)
+    private void getParquetBloomFilterProperties(
+            ConnectorSession session,
+            SchemaTableName tableName,
+            ImmutableMap.Builder<String, Object> properties)
+    {
+        Table table = metastore
+                .getTable(new HiveIdentity(session), tableName.getSchemaName(), tableName.getTableName())
+                .orElseThrow(() -> new TableNotFoundException(tableName));
+
+        if (!isIcebergTable(table) || isMaterializedView(table)) {
+            return;
+        }
+
+        String parquetBloomFilterColumns = table.getParameters().get(PARQUET_BLOOM_FILTER_COLUMNS_KEY);
+        String parquetBloomFilterFfp = table.getParameters().get(PARQUET_BLOOM_FILTER_FPP_KEY);
+
+        if (parquetBloomFilterColumns != null) {
+            properties.put(
+                    PARQUET_BLOOM_FILTER_COLUMNS,
+                    Splitter.on(',').trimResults().omitEmptyStrings().splitToList(parquetBloomFilterColumns));
+        }
+        if (parquetBloomFilterFfp != null) {
+            properties.put(PARQUET_BLOOM_FILTER_FPP, Double.parseDouble(parquetBloomFilterFfp));
+        }
+    }
+
+    private List<ColumnMetadata> getColumnMetadatas(org.apache.iceberg.Table table)
     {
         return table.schema().columns().stream()
                 .map(column -> {

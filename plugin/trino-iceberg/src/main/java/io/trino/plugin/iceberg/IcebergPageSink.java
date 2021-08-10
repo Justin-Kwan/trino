@@ -26,6 +26,7 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.type.BigintType;
 import io.trino.spi.type.BooleanType;
 import io.trino.spi.type.DateType;
@@ -86,6 +87,7 @@ public class IcebergPageSink
     private final Schema outputSchema;
     private final PartitionSpec partitionSpec;
     private final LocationProvider locationProvider;
+    private final ConnectorTableMetadata tableMetadata;
     private final IcebergFileWriterFactory fileWriterFactory;
     private final HdfsEnvironment hdfsEnvironment;
     private final HdfsContext hdfsContext;
@@ -105,6 +107,7 @@ public class IcebergPageSink
             Schema outputSchema,
             PartitionSpec partitionSpec,
             LocationProvider locationProvider,
+            ConnectorTableMetadata tableMetadata,
             IcebergFileWriterFactory fileWriterFactory,
             PageIndexerFactory pageIndexerFactory,
             HdfsEnvironment hdfsEnvironment,
@@ -119,6 +122,7 @@ public class IcebergPageSink
         this.outputSchema = requireNonNull(outputSchema, "outputSchema is null");
         this.partitionSpec = requireNonNull(partitionSpec, "partitionSpec is null");
         this.locationProvider = requireNonNull(locationProvider, "locationProvider is null");
+        this.tableMetadata = requireNonNull(tableMetadata, "tableMetadata is null");
         this.fileWriterFactory = requireNonNull(fileWriterFactory, "fileWriterFactory is null");
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
         this.hdfsContext = requireNonNull(hdfsContext, "hdfsContext is null");
@@ -307,6 +311,7 @@ public class IcebergPageSink
         IcebergFileWriter writer = fileWriterFactory.createFileWriter(
                 outputPath,
                 outputSchema,
+                tableMetadata,
                 jobConf,
                 session,
                 hdfsContext,

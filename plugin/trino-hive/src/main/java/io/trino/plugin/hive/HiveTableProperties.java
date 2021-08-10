@@ -38,10 +38,10 @@ import static io.trino.spi.session.PropertyMetadata.booleanProperty;
 import static io.trino.spi.session.PropertyMetadata.doubleProperty;
 import static io.trino.spi.session.PropertyMetadata.enumProperty;
 import static io.trino.spi.session.PropertyMetadata.integerProperty;
-import static io.trino.spi.session.PropertyMetadata.listProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.String.format;
+import static java.util.Locale.ENGLISH;
 
 public class HiveTableProperties
 {
@@ -59,6 +59,8 @@ public class HiveTableProperties
     public static final String ANALYZE_COLUMNS_PROPERTY = "presto.analyze_columns";
     public static final String ORC_BLOOM_FILTER_COLUMNS = "orc_bloom_filter_columns";
     public static final String ORC_BLOOM_FILTER_FPP = "orc_bloom_filter_fpp";
+    public static final String PARQUET_BLOOM_FILTER_COLUMNS = "parquet_bloom_filter_columns";
+    public static final String PARQUET_BLOOM_FILTER_FPP = "parquet_bloom_filter_fpp";
     public static final String AVRO_SCHEMA_URL = "avro_schema_url";
     public static final String TEXTFILE_FIELD_SEPARATOR = "textfile_field_separator";
     public static final String TEXTFILE_FIELD_SEPARATOR_ESCAPE = "textfile_field_separator_escape";
@@ -75,7 +77,8 @@ public class HiveTableProperties
     @Inject
     public HiveTableProperties(
             HiveConfig config,
-            OrcWriterConfig orcWriterConfig)
+            OrcWriterConfig orcWriterConfig,
+            ParquetWriterConfig parquetWriterConfig)
     {
         tableProperties = ImmutableList.of(
                 stringProperty(
@@ -89,8 +92,28 @@ public class HiveTableProperties
                         HiveStorageFormat.class,
                         config.getHiveStorageFormat(),
                         false),
-                listProperty(PARTITIONED_BY_PROPERTY, "Partition columns"),
-                listProperty(BUCKETED_BY_PROPERTY, "Bucketing columns"),
+                new PropertyMetadata<>(
+                        PARTITIONED_BY_PROPERTY,
+                        "Partition columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(name -> ((String) name).toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value),
+                new PropertyMetadata<>(
+                        BUCKETED_BY_PROPERTY,
+                        "Bucketing columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(name -> ((String) name).toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value),
                 new PropertyMetadata<>(
                         SORTED_BY_PROPERTY,
                         "Bucket sorting columns",
@@ -106,13 +129,39 @@ public class HiveTableProperties
                                 .map(SortingColumn.class::cast)
                                 .map(HiveUtil::sortingColumnToString)
                                 .collect(toImmutableList())),
-                listProperty(
+                new PropertyMetadata<>(
                         ORC_BLOOM_FILTER_COLUMNS,
-                        "ORC Bloom filter index columns"),
+                        "ORC Bloom filter index columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(String.class::cast)
+                                .map(name -> name.toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value),
                 doubleProperty(
                         ORC_BLOOM_FILTER_FPP,
                         "ORC Bloom filter false positive probability",
                         orcWriterConfig.getDefaultBloomFilterFpp(),
+                        false),
+                new PropertyMetadata<>(
+                        PARQUET_BLOOM_FILTER_COLUMNS,
+                        "Parquet Bloom filter index columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(String.class::cast)
+                                .map(name -> name.toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value),
+                doubleProperty(
+                        PARQUET_BLOOM_FILTER_FPP,
+                        "Parquet Bloom filter false positive probability",
+                        parquetWriterConfig.getDefaultBloomFilterFpp(),
                         false),
                 integerProperty(BUCKETING_VERSION, "Bucketing version", null, false),
                 integerProperty(BUCKET_COUNT_PROPERTY, "Number of buckets", 0, false),
@@ -230,6 +279,17 @@ public class HiveTableProperties
     public static Double getOrcBloomFilterFpp(Map<String, Object> tableProperties)
     {
         return (Double) tableProperties.get(ORC_BLOOM_FILTER_FPP);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static List<String> getParquetBloomFilterColumns(Map<String, Object> tableProperties)
+    {
+        return (List<String>) tableProperties.get(PARQUET_BLOOM_FILTER_COLUMNS);
+    }
+
+    public static Double getParquetBloomFilterFpp(Map<String, Object> tableProperties)
+    {
+        return (Double) tableProperties.get(PARQUET_BLOOM_FILTER_FPP);
     }
 
     public static Optional<Character> getSingleCharacterProperty(Map<String, Object> tableProperties, String key)

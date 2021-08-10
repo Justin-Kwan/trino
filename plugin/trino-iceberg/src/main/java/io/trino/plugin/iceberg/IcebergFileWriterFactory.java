@@ -21,7 +21,6 @@ import io.trino.orc.OrcReaderOptions;
 import io.trino.orc.OrcWriterOptions;
 import io.trino.orc.OrcWriterStats;
 import io.trino.orc.OutputStreamOrcDataSink;
-import io.trino.parquet.writer.ParquetWriterOptions;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
 import io.trino.plugin.hive.HdfsEnvironment;
 import io.trino.plugin.hive.HdfsEnvironment.HdfsContext;
@@ -30,6 +29,7 @@ import io.trino.plugin.hive.orc.HdfsOrcDataSource;
 import io.trino.plugin.hive.orc.OrcWriterConfig;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.TypeManager;
 import org.apache.hadoop.fs.FileSystem;
@@ -53,6 +53,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.hive.HiveMetadata.PRESTO_QUERY_ID_NAME;
 import static io.trino.plugin.hive.HiveMetadata.PRESTO_VERSION_NAME;
+import static io.trino.plugin.hive.util.HiveUtil.getParquetWriterOptions;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_WRITER_OPEN_ERROR;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_WRITE_VALIDATION_FAILED;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getCompressionCodec;
@@ -62,8 +63,6 @@ import static io.trino.plugin.iceberg.IcebergSessionProperties.getOrcWriterMaxSt
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getOrcWriterMaxStripeSize;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getOrcWriterMinStripeSize;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.getOrcWriterValidateMode;
-import static io.trino.plugin.iceberg.IcebergSessionProperties.getParquetWriterBlockSize;
-import static io.trino.plugin.iceberg.IcebergSessionProperties.getParquetWriterPageSize;
 import static io.trino.plugin.iceberg.IcebergSessionProperties.isOrcWriterValidate;
 import static io.trino.plugin.iceberg.TypeConverter.toOrcType;
 import static io.trino.plugin.iceberg.TypeConverter.toTrinoType;
@@ -106,6 +105,7 @@ public class IcebergFileWriterFactory
     public IcebergFileWriter createFileWriter(
             Path outputPath,
             Schema icebergSchema,
+            ConnectorTableMetadata tableMetadata,
             JobConf jobConf,
             ConnectorSession session,
             HdfsContext hdfsContext,
@@ -113,7 +113,7 @@ public class IcebergFileWriterFactory
     {
         switch (fileFormat) {
             case PARQUET:
-                return createParquetWriter(outputPath, icebergSchema, jobConf, session, hdfsContext);
+                return createParquetWriter(outputPath, icebergSchema, tableMetadata, jobConf, session, hdfsContext);
             case ORC:
                 return createOrcWriter(outputPath, icebergSchema, jobConf, session);
             default:
@@ -124,6 +124,7 @@ public class IcebergFileWriterFactory
     private IcebergFileWriter createParquetWriter(
             Path outputPath,
             Schema icebergSchema,
+            ConnectorTableMetadata tableMetadata,
             JobConf jobConf,
             ConnectorSession session,
             HdfsContext hdfsContext)
@@ -143,18 +144,13 @@ public class IcebergFileWriterFactory
                 return null;
             };
 
-            ParquetWriterOptions parquetWriterOptions = ParquetWriterOptions.builder()
-                    .setMaxPageSize(getParquetWriterPageSize(session))
-                    .setMaxPageSize(getParquetWriterBlockSize(session))
-                    .build();
-
             return new IcebergParquetFileWriter(
                     hdfsEnvironment.doAs(session.getIdentity(), () -> fileSystem.create(outputPath)),
                     rollbackAction,
                     fileColumnTypes,
                     convert(icebergSchema, "table"),
                     makeTypeMap(fileColumnTypes, fileColumnNames),
-                    parquetWriterOptions,
+                    getParquetWriterOptions(session, tableMetadata.getProperties()),
                     IntStream.range(0, fileColumnNames.size()).toArray(),
                     getCompressionCodec(session).getParquetCompressionCodec(),
                     outputPath,

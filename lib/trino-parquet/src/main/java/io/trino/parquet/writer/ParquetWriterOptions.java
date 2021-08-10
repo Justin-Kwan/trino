@@ -28,7 +28,7 @@ public class ParquetWriterOptions
     /**
      * The same fpp is used by parquet-mr:
      * https://github.com/apache/parquet-mr/blob/5608695f5777de1eb0899d9075ec9411cfdf31d3/parquet-column/src/main/java/org/apache/parquet/column/values/bloomfilter/BlockSplitBloomFilter.java#L60
-     */g
+     */
     private static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
     private static final DataSize DEFAULT_MAX_ROW_GROUP_SIZE = DataSize.ofBytes(ParquetWriter.DEFAULT_BLOCK_SIZE);
     private static final DataSize DEFAULT_MAX_PAGE_SIZE = DataSize.ofBytes(ParquetWriter.DEFAULT_PAGE_SIZE);

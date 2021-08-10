@@ -46,7 +46,7 @@ public class TestParquetWriterConfig
                 ParquetWriterConfig.class,
                 Map.of(
                         "parquet.experimental-optimized-writer.enabled", "true",
-                        "parquet.default-bloom-filter-fpp", "0.05",
+                        "parquet.bloom-filter-fpp", "0.05",
                         "parquet.writer.block-size", "2PB",
                         "parquet.writer.page-size", "3PB"),
                 Map.of(
@@ -60,7 +60,7 @@ public class TestParquetWriterConfig
     {
         Map<String, String> properties = Map.of(
                 "parquet.experimental-optimized-writer.enabled", "true",
-                "parquet.default-bloom-filter-fpp", "0.03",
+                "parquet.bloom-filter-fpp", "0.03",
                 "parquet.writer.block-size", "234MB",
                 "parquet.writer.page-size", "11MB");
 
