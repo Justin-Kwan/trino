@@ -20,8 +20,11 @@ import io.airlift.units.DataSize;
 import io.trino.parquet.writer.ParquetWriterOptions;
 import org.apache.parquet.hadoop.ParquetWriter;
 
+import static com.google.common.base.Preconditions.checkArgument;
+
 public class ParquetWriterConfig
 {
+    private double bloomFilterFpp = 0.01;
     private boolean parquetOptimizedWriterEnabled;
 
     private DataSize blockSize = DataSize.ofBytes(ParquetWriter.DEFAULT_BLOCK_SIZE);
@@ -30,6 +33,20 @@ public class ParquetWriterConfig
     public DataSize getBlockSize()
     {
         return blockSize;
+    }
+
+    @Config("parquet.bloom-filter-fpp")
+    @ConfigDescription("Parquet Bloom filter false positive probability")
+    public ParquetWriterConfig setBloomFilterFpp(double value)
+    {
+        checkArgument(value > 0.0 && value < 1.0, "False positive probability should be between 0 and 1");
+        this.bloomFilterFpp = value;
+        return this;
+    }
+
+    public double getBloomFilterFpp()
+    {
+        return bloomFilterFpp;
     }
 
     @Config("parquet.writer.block-size")
@@ -72,6 +89,7 @@ public class ParquetWriterConfig
         return ParquetWriterOptions.builder()
                 .setMaxBlockSize(getBlockSize())
                 .setMaxPageSize(getPageSize())
+                .setBloomFilterFpp(getBloomFilterFpp())
                 .build();
     }
 }

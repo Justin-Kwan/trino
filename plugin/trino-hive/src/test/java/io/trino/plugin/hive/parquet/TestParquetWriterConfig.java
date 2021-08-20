@@ -24,16 +24,32 @@ import static io.airlift.configuration.testing.ConfigAssertions.assertFullMappin
 import static io.airlift.configuration.testing.ConfigAssertions.assertRecordedDefaults;
 import static io.airlift.configuration.testing.ConfigAssertions.recordDefaults;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 public class TestParquetWriterConfig
 {
+    private static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
+
     @Test
     public void testDefaults()
     {
         assertRecordedDefaults(recordDefaults(ParquetWriterConfig.class)
                 .setParquetOptimizedWriterEnabled(false)
                 .setBlockSize(DataSize.ofBytes(ParquetWriter.DEFAULT_BLOCK_SIZE))
-                .setPageSize(DataSize.ofBytes(ParquetWriter.DEFAULT_PAGE_SIZE)));
+                .setPageSize(DataSize.ofBytes(ParquetWriter.DEFAULT_PAGE_SIZE))
+                .setBloomFilterFpp(DEFAULT_BLOOM_FILTER_FPP));
+    }
+
+    @Test
+    public void testInvalidBloomFilterFpp()
+    {
+        assertThatThrownBy(() -> new ParquetWriterConfig().setBloomFilterFpp(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("False positive probability should be between 0 and 1");
+
+        assertThatThrownBy(() -> new ParquetWriterConfig().setBloomFilterFpp(1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("False positive probability should be between 0 and 1");
     }
 
     @Test
@@ -43,6 +59,7 @@ public class TestParquetWriterConfig
                 ParquetWriterConfig.class,
                 Map.of(
                         "parquet.experimental-optimized-writer.enabled", "true",
+                        "parquet.default-bloom-filter-fpp", "0.01",
                         "parquet.writer.block-size", "2PB",
                         "parquet.writer.page-size", "3PB"),
                 Map.of(
@@ -56,13 +73,15 @@ public class TestParquetWriterConfig
     {
         Map<String, String> properties = Map.of(
                 "parquet.experimental-optimized-writer.enabled", "true",
+                "parquet.default-bloom-filter-fpp", "0.03",
                 "parquet.writer.block-size", "234MB",
                 "parquet.writer.page-size", "11MB");
 
         ParquetWriterConfig expected = new ParquetWriterConfig()
                 .setParquetOptimizedWriterEnabled(true)
                 .setBlockSize(DataSize.of(234, MEGABYTE))
-                .setPageSize(DataSize.of(11, MEGABYTE));
+                .setPageSize(DataSize.of(11, MEGABYTE))
+                .setBloomFilterFpp(0.03);
 
         assertFullMapping(properties, expected);
     }
