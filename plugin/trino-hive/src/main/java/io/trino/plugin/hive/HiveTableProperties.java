@@ -16,6 +16,7 @@ package io.trino.plugin.hive;
 import com.google.common.collect.ImmutableList;
 import io.trino.plugin.hive.metastore.SortingColumn;
 import io.trino.plugin.hive.orc.OrcWriterConfig;
+import io.trino.plugin.hive.parquet.ParquetWriterConfig;
 import io.trino.plugin.hive.util.HiveBucketing.BucketingVersion;
 import io.trino.plugin.hive.util.HiveUtil;
 import io.trino.spi.TrinoException;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V1;
 import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V2;
@@ -58,6 +60,8 @@ public class HiveTableProperties
     public static final String ANALYZE_COLUMNS_PROPERTY = "presto.analyze_columns";
     public static final String ORC_BLOOM_FILTER_COLUMNS = "orc_bloom_filter_columns";
     public static final String ORC_BLOOM_FILTER_FPP = "orc_bloom_filter_fpp";
+    public static final String PARQUET_BLOOM_FILTER_COLUMNS = "parquet_bloom_filter_columns";
+    public static final String PARQUET_BLOOM_FILTER_FPP = "parquet_bloom_filter_fpp";
     public static final String AVRO_SCHEMA_URL = "avro_schema_url";
     public static final String TEXTFILE_FIELD_SEPARATOR = "textfile_field_separator";
     public static final String TEXTFILE_FIELD_SEPARATOR_ESCAPE = "textfile_field_separator_escape";
@@ -74,7 +78,8 @@ public class HiveTableProperties
     @Inject
     public HiveTableProperties(
             HiveConfig config,
-            OrcWriterConfig orcWriterConfig)
+            OrcWriterConfig orcWriterConfig,
+            ParquetWriterConfig parquetWriterConfig)
     {
         tableProperties = ImmutableList.of(
                 stringProperty(
@@ -142,6 +147,23 @@ public class HiveTableProperties
                         "ORC Bloom filter false positive probability",
                         orcWriterConfig.getDefaultBloomFilterFpp(),
                         false),
+                new PropertyMetadata<>(
+                        PARQUET_BLOOM_FILTER_COLUMNS,
+                        "Parquet Bloom filter index columns",
+                        new ArrayType(VARCHAR),
+                        List.class,
+                        ImmutableList.of(),
+                        false,
+                        value -> ((List<?>) value).stream()
+                                .map(String.class::cast)
+                                .map(name -> name.toLowerCase(ENGLISH))
+                                .collect(toImmutableList()),
+                        value -> value),
+                doubleProperty(
+                        PARQUET_BLOOM_FILTER_FPP,
+                        "Parquet Bloom filter false positive probability",
+                        verifyBloomFilterFppValid(parquetWriterConfig.getBloomFilterFpp()),
+                        false),
                 integerProperty(BUCKETING_VERSION, "Bucketing version", null, false),
                 integerProperty(BUCKET_COUNT_PROPERTY, "Number of buckets", 0, false),
                 stringProperty(AVRO_SCHEMA_URL, "URI pointing to Avro schema for the table", null, false),
@@ -154,6 +176,14 @@ public class HiveTableProperties
                 stringProperty(CSV_QUOTE, "CSV quote character", null, false),
                 stringProperty(CSV_ESCAPE, "CSV escape character", null, false),
                 booleanProperty(TRANSACTIONAL, "Table is transactional", null, false));
+    }
+
+    private static double verifyBloomFilterFppValid(double value)
+    {
+        checkArgument(
+                value > 0.0 && value < 1.0,
+                "False positive probability should be between 0 and 1");
+        return value;
     }
 
     public List<PropertyMetadata<?>> getTableProperties()
@@ -258,6 +288,17 @@ public class HiveTableProperties
     public static Double getOrcBloomFilterFpp(Map<String, Object> tableProperties)
     {
         return (Double) tableProperties.get(ORC_BLOOM_FILTER_FPP);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static List<String> getParquetBloomFilterColumns(Map<String, Object> tableProperties)
+    {
+        return (List<String>) tableProperties.get(PARQUET_BLOOM_FILTER_COLUMNS);
+    }
+
+    public static Double getParquetBloomFilterFpp(Map<String, Object> tableProperties)
+    {
+        return (Double) tableProperties.get(PARQUET_BLOOM_FILTER_FPP);
     }
 
     public static Optional<Character> getSingleCharacterProperty(Map<String, Object> tableProperties, String key)
