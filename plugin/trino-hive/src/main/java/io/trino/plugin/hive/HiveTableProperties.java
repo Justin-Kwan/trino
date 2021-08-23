@@ -145,7 +145,7 @@ public class HiveTableProperties
                 doubleProperty(
                         ORC_BLOOM_FILTER_FPP,
                         "ORC Bloom filter false positive probability",
-                        orcWriterConfig.getDefaultBloomFilterFpp(),
+                        verifyBloomFilterFppValid(orcWriterConfig.getDefaultBloomFilterFpp()),
                         false),
                 new PropertyMetadata<>(
                         PARQUET_BLOOM_FILTER_COLUMNS,
