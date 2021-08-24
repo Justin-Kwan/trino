@@ -23,6 +23,7 @@ import io.trino.GroupByHashPageIndexerFactory;
 import io.trino.PagesIndexPageSorter;
 import io.trino.Session;
 import io.trino.SystemSessionProperties;
+import io.trino.SystemSessionPropertiesProvider;
 import io.trino.connector.CatalogName;
 import io.trino.connector.ConnectorManager;
 import io.trino.connector.system.AnalyzePropertiesSystemTable;
@@ -195,6 +196,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -295,7 +297,8 @@ public class LocalQueryRunner
             int nodeCountForStats,
             Map<String, List<PropertyMetadata<?>>> defaultSessionProperties,
             PlanOptimizersProvider planOptimizersProvider,
-            OperatorFactories operatorFactories)
+            OperatorFactories operatorFactories,
+            Set<SystemSessionPropertiesProvider> systemSessionProperties)
     {
         requireNonNull(defaultSession, "defaultSession is null");
         requireNonNull(defaultSessionProperties, "defaultSessionProperties is null");
@@ -331,7 +334,7 @@ public class LocalQueryRunner
 
         this.metadata = new MetadataManager(
                 featuresConfig,
-                new SessionPropertyManager(new SystemSessionProperties(new QueryManagerConfig(), taskManagerConfig, new MemoryManagerConfig(), featuresConfig, new NodeMemoryConfig(), new DynamicFilterConfig(), new NodeSchedulerConfig())),
+                new SessionPropertyManager(requireNonNull(systemSessionProperties, "systemSessionProperties is null")),
                 new SchemaPropertyManager(),
                 new TablePropertyManager(),
                 new MaterializedViewPropertyManager(),
@@ -980,6 +983,7 @@ public class LocalQueryRunner
         private boolean initialTransaction;
         private boolean alwaysRevokeMemory;
         private Map<String, List<PropertyMetadata<?>>> defaultSessionProperties = ImmutableMap.of();
+        private Optional<Set<SystemSessionPropertiesProvider>> systemSessionProperties = Optional.empty();
         private int nodeCountForStats;
         private PlanOptimizersProvider planOptimizersProvider = (
                 forceSingleNode,
@@ -1066,6 +1070,26 @@ public class LocalQueryRunner
             return this;
         }
 
+        public Builder withSystemSessionProperties(Set<SystemSessionPropertiesProvider> properties)
+        {
+            this.systemSessionProperties = Optional.of(ImmutableSet.copyOf(
+                    requireNonNull(properties, "properties is null")));
+            return this;
+        }
+
+        private Set<SystemSessionPropertiesProvider> getSystemSessionProperties()
+        {
+            return systemSessionProperties.orElseGet(() ->
+                    ImmutableSet.of(new SystemSessionProperties(
+                            new QueryManagerConfig(),
+                            new TaskManagerConfig().setTaskConcurrency(4),
+                            new MemoryManagerConfig(),
+                            featuresConfig,
+                            new NodeMemoryConfig(),
+                            new DynamicFilterConfig(),
+                            new NodeSchedulerConfig())));
+        }
+
         public LocalQueryRunner build()
         {
             return new LocalQueryRunner(
@@ -1077,7 +1101,8 @@ public class LocalQueryRunner
                     nodeCountForStats,
                     defaultSessionProperties,
                     planOptimizersProvider,
-                    operatorFactories);
+                    operatorFactories,
+                    getSystemSessionProperties());
         }
     }
 }
